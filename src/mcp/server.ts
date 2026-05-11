@@ -87,29 +87,6 @@ registerProbeTools(server);
 
 registerFixTools(server);
 
-// ---------------------------------------------------------------------------
-// Verification & regression
-// ---------------------------------------------------------------------------
-
-server.registerTool(
-  "verify_clean",
-  {
-    title: "Re-run confirmed exploits as a regression check",
-    description:
-      "Replay only the exploits that the attacker found previously, against the fixed worktree. Returns a per-finding pass/fail map; a fail means the fix didn't actually close the hole.",
-    inputSchema: z.object({
-      url: z.string(),
-      findings: z.array(
-        z.object({
-          id: z.string(),
-          payload: z.record(z.string(), z.unknown()),
-        }),
-      ),
-    }),
-  },
-  async () => stub("verify_clean"),
-);
-
 server.registerTool(
   "freeze_test",
   {

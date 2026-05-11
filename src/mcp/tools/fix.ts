@@ -29,6 +29,8 @@ import {
   validateCommit,
   formatCommitMessage,
 } from "./snap.js";
+import { SignalSchema, HttpMethodSchema, type Signal } from "./payload-schema.js";
+import { probeEndpoint } from "./probe.js";
 
 function asContent<T>(payload: T) {
   return {
@@ -146,7 +148,110 @@ async function applyFix(input: ApplyFixInput): Promise<ApplyFixResult> {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  MCP wiring (apply_fix only for now; the others come in following commits) */
+/*  verify_clean                                                              */
+/* -------------------------------------------------------------------------- */
+
+interface VerifyFindingInput {
+  id: string;
+  request: {
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
+    path: string;
+    headers?: Record<string, string>;
+    body?: string;
+  };
+  success_signal: Signal;
+}
+
+interface VerifyCleanInput {
+  url: string;
+  findings: VerifyFindingInput[];
+  timeoutMs?: number;
+}
+
+interface VerifyOneResult {
+  id: string;
+  /** true = bug is STILL present (signal matched again). */
+  stillVulnerable: boolean;
+  /** alias of stillVulnerable for callers thinking in 'matched' terms. */
+  matched: boolean;
+  explanation?: string;
+  responseStatus?: number;
+  error?: string;
+}
+
+interface VerifyCleanResult {
+  ok: boolean;
+  url: string;
+  results: VerifyOneResult[];
+  cleaned: string[];
+  stillVulnerable: string[];
+  error?: string;
+}
+
+async function verifyClean(input: VerifyCleanInput): Promise<VerifyCleanResult> {
+  if (!Array.isArray(input.findings) || input.findings.length === 0) {
+    return {
+      ok: false,
+      url: input.url,
+      results: [],
+      cleaned: [],
+      stillVulnerable: [],
+      error: "findings[] must contain at least one entry",
+    };
+  }
+
+  const results: VerifyOneResult[] = [];
+  const cleaned: string[] = [];
+  const stillVulnerable: string[] = [];
+
+  for (const f of input.findings) {
+    const probe = await probeEndpoint({
+      url: input.url,
+      path: f.request.path,
+      method: f.request.method,
+      headers: f.request.headers,
+      body: f.request.body,
+      timeoutMs: input.timeoutMs,
+      evaluateSignal: f.success_signal,
+    });
+
+    if (!probe.ok) {
+      // network error / connection refused → can't verify either way. report
+      // it explicitly and DON'T mark it cleaned. callers can decide what to
+      // do (treat as "needs retry" or "needs manual check").
+      results.push({
+        id: f.id,
+        stillVulnerable: false,
+        matched: false,
+        error: probe.error ?? "probe failed",
+      });
+      continue;
+    }
+
+    const matched = probe.signal?.matched === true;
+    const one: VerifyOneResult = {
+      id: f.id,
+      stillVulnerable: matched,
+      matched,
+      explanation: probe.signal?.explanation,
+      responseStatus: probe.response?.status,
+    };
+    results.push(one);
+    if (matched) stillVulnerable.push(f.id);
+    else cleaned.push(f.id);
+  }
+
+  return {
+    ok: true,
+    url: input.url,
+    results,
+    cleaned,
+    stillVulnerable,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  MCP wiring                                                                */
 /* -------------------------------------------------------------------------- */
 
 export function registerFixTools(server: McpServer): void {
@@ -182,7 +287,43 @@ export function registerFixTools(server: McpServer): void {
       return asContent(result);
     },
   );
-}
 
-// The remaining tools (verify_clean, freeze_test, merge_fix_branch) are
-// added by subsequent commits.
+  server.registerTool(
+    "verify_clean",
+    {
+      title: "Replay confirmed exploits to confirm fixes worked",
+      description:
+        "Re-runs each captured (request, success_signal) pair against the (presumably-fixed) running server. Returns per-finding {stillVulnerable, explanation, responseStatus}. cleaned[] lists ids whose signal no longer matches (the fix worked); stillVulnerable[] lists ids whose signal STILL matches (the fix did not close the hole). Network errors on the probe are reported per-finding and do NOT mark a finding cleaned — they need manual triage. Uses the same structured signal evaluator as probe_endpoint, so 'cleaned' here is the same source of truth as 'found' was during the scan.",
+      inputSchema: z.object({
+        url: z.string().describe("Base URL of the (restarted) dev server."),
+        findings: z
+          .array(
+            z.object({
+              id: z.string(),
+              request: z.object({
+                method: HttpMethodSchema,
+                path: z.string(),
+                headers: z.record(z.string(), z.string()).optional(),
+                body: z.string().optional(),
+              }),
+              success_signal: SignalSchema,
+            }),
+          )
+          .min(1),
+        timeoutMs: z.number().int().positive().optional(),
+      }),
+    },
+    async (args) => {
+      const result = await verifyClean({
+        url: args.url,
+        findings: args.findings.map((f) => ({
+          id: f.id,
+          request: f.request,
+          success_signal: f.success_signal,
+        })),
+        timeoutMs: args.timeoutMs,
+      });
+      return asContent(result);
+    },
+  );
+}
