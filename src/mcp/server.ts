@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { registerSnapTools } from "./tools/snap.js";
+import { registerWorktreeTools } from "./tools/worktree.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -52,22 +53,12 @@ function stub(tool: string) {
 registerSnapTools(server);
 
 // ---------------------------------------------------------------------------
-// Worktree lifecycle
+// Worktree lifecycle — implemented in ./tools/worktree.ts. create_scan_worktree
+// is real; install_and_start and cleanup_worktree are still stubs pending the
+// next commits.
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "create_scan_worktree",
-  {
-    title: "Create an isolated git worktree for the scan",
-    description:
-      "Run `git worktree add` for a fresh branch named isitsafebro/scan-<ts>, symlink node_modules from the main checkout, fall back to a fresh install if symlinking fails. Returns the worktree path and branch name.",
-    inputSchema: z.object({
-      cwd: z.string().optional(),
-      branchPrefix: z.string().optional().describe("Defaults to 'isitsafebro/scan-'."),
-    }),
-  },
-  async () => stub("create_scan_worktree"),
-);
+registerWorktreeTools(server);
 
 server.registerTool(
   "install_and_start",
