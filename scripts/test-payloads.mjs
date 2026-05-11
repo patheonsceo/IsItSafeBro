@@ -132,21 +132,28 @@ async function main() {
     if (!hasNestedAnyOf) die("expected a nested any_of inside cors signal");
     log("recursive signal structure ok on cors-misconfig");
 
-    /* 6. load all → auth present, others missing */
+    /* 6. load all → every shipped category present, no missing */
     const all = await client.callTool("load_payloads", { category: "all" });
     if (!all.ok) die("all load failed: " + JSON.stringify(all));
-    if (all.total !== 10) die(`expected total=10 when only auth shipped, got ${all.total}`);
-    const missingSorted = [...all.missing].sort();
-    if (JSON.stringify(missingSorted) !== JSON.stringify(["api", "idor", "prompt", "secrets"])) {
-      die("unexpected missing list: " + JSON.stringify(missingSorted));
+    const cats = new Set(all.loaded.map((c) => c.category));
+    const expectedCats = new Set(["auth", "api", "secrets", "idor", "prompt"]);
+    for (const c of expectedCats) {
+      if (!cats.has(c)) die(`expected category ${c} to be loaded, but it wasn't`);
     }
-    log("all-load reports missing categories correctly:", missingSorted);
+    // The library can grow without breaking this test; just assert minimums.
+    if (all.total < 30) die(`expected at least 30 total payloads with all 5 categories shipped, got ${all.total}`);
+    if (all.missing.length !== 0) die("expected no missing categories now that all 5 ship; got: " + JSON.stringify(all.missing));
+    log(`all-load: ${all.total} payloads across ${all.loaded.length} categories`);
 
-    /* 7. missing single category is a hard error */
-    const missing = await client.callTool("load_payloads", { category: "secrets" });
-    if (missing.ok !== false) die("expected missing 'secrets' single-load to fail");
-    if (!/not found/.test(missing.error)) die("expected 'not found' in error");
-    log("single-category miss correctly hard-errors:", missing.error.split("\n")[0]);
+    /* 7. unknown category is a schema-validation error */
+    let threw = false;
+    try {
+      await client.callTool("load_payloads", { category: "no-such-category" });
+    } catch {
+      threw = true;
+    }
+    if (!threw) die("expected unknown category to be rejected by zod enum");
+    log("single-category miss correctly hard-errors: unknown enum value rejected");
 
     log("ALL CHECKS PASSED");
   } finally {
