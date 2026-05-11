@@ -1,0 +1,57 @@
+{
+  "name": "isitsafebro",
+  "version": "0.0.1",
+  "description": "is it safe, bro? red-team your vibe-coded app before you ship. a claude code plugin.",
+  "keywords": [
+    "security",
+    "red-team",
+    "claude-code",
+    "claude-code-plugin",
+    "mcp",
+    "owasp",
+    "vibe-coding",
+    "ai-security",
+    "prompt-injection"
+  ],
+  "homepage": "https://github.com/patheonsceo/IsItSafeBro",
+  "bugs": {
+    "url": "https://github.com/patheonsceo/IsItSafeBro/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/patheonsceo/IsItSafeBro.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "isitsafebro": "dist/bin/isitsafebro.js"
+  },
+  "files": [
+    "dist",
+    "plugin",
+    "payloads",
+    "prompts",
+    "scripts",
+    "LICENSE",
+    "README.md",
+    "isitsafeproject.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/bin/isitsafebro.ts",
+    "start": "node dist/bin/isitsafebro.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
