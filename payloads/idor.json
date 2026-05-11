@@ -1,0 +1,241 @@
+{
+  "category": "idor",
+  "version": 1,
+  "payloads": [
+    {
+      "id": "per-user-resource-fetched-without-auth",
+      "name": "per-user resource is fetchable without authentication",
+      "description": "Endpoints under /api/<resource>/<id> that return one user's data (or one order, invoice, customer, etc.) should require authentication AND verify the requester owns that resource. The most common bug: no auth check at all, so anyone on the internet can fetch /api/users/1, /api/users/2, and walk the whole table.",
+      "category": "idor",
+      "severity": "critical",
+      "endpoints_hint": [
+        "/api/users/1",
+        "/api/users/2",
+        "/api/orders/1",
+        "/api/invoices/1",
+        "/api/customers/1",
+        "/api/profile/1",
+        "/api/accounts/1",
+        "/api/posts/1",
+        "/api/tickets/1",
+        "/api/messages/1"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200] },
+          {
+            "kind": "body_contains_any",
+            "patterns": ["\"email\"", "\"id\"", "\"name\"", "\"user_id\"", "\"userId\"", "\"phone\"", "\"created_at\"", "\"createdAt\""],
+            "case_insensitive": false
+          },
+          {
+            "kind": "body_not_contains_any",
+            "patterns": ["unauthorized", "log in", "sign in", "forbidden", "not authenticated"],
+            "case_insensitive": true
+          }
+        ]
+      },
+      "fix_hint": "Every per-resource route needs two checks, not one: (1) the requester is authenticated, and (2) the requested resource belongs to (or is otherwise authorized for) that requester. In Next.js, wrap each /api/users/[id]/route.ts handler with an auth check (await getServerSession()) AND an ownership check (session.user.id === params.id). Same shape in Express with a middleware before the handler."
+    },
+    {
+      "id": "unauthed-list-endpoint-returns-records",
+      "name": "list endpoint returns all rows without authentication",
+      "description": "/api/users, /api/orders, /api/customers etc. return an array of records to anonymous callers. Even when the per-row endpoint is protected, a list endpoint that isn't is just as bad.",
+      "category": "idor",
+      "severity": "high",
+      "endpoints_hint": [
+        "/api/users",
+        "/api/orders",
+        "/api/customers",
+        "/api/invoices",
+        "/api/posts",
+        "/api/tickets",
+        "/api/messages",
+        "/api/comments",
+        "/api/accounts",
+        "/api/projects"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200] },
+          {
+            "kind": "any_of",
+            "conditions": [
+              { "kind": "body_matches_regex", "pattern": "^\\s*\\[\\s*\\{", "case_insensitive": false },
+              { "kind": "body_matches_regex", "pattern": "\"data\"\\s*:\\s*\\[\\s*\\{", "case_insensitive": false },
+              { "kind": "body_matches_regex", "pattern": "\"items\"\\s*:\\s*\\[\\s*\\{", "case_insensitive": false },
+              { "kind": "body_matches_regex", "pattern": "\"users\"\\s*:\\s*\\[\\s*\\{", "case_insensitive": false }
+            ]
+          },
+          {
+            "kind": "body_not_contains_any",
+            "patterns": ["unauthorized", "log in", "sign in", "forbidden", "not authenticated"],
+            "case_insensitive": true
+          }
+        ]
+      },
+      "fix_hint": "Either require authentication and scope the result to the requester ('list MY orders'), or move the route behind an explicit public-data flag. Public-data routes should be reviewed individually — most apps don't have any list endpoint that's actually meant to be open."
+    },
+    {
+      "id": "graphql-unauthed-user-query",
+      "name": "GraphQL allows anonymous user(id:) query",
+      "description": "Even when the REST surface is locked down, a GraphQL endpoint can leak per-user data through a query like { user(id: 1) { email } }. Many GraphQL-on-vibe-coded-apps setups forget to apply auth at the resolver level.",
+      "category": "idor",
+      "severity": "high",
+      "endpoints_hint": [
+        "/graphql",
+        "/api/graphql",
+        "/api/v1/graphql",
+        "/v1/graphql"
+      ],
+      "request": {
+        "method": "POST",
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"query\":\"{ user(id: 1) { id email name } }\"}"
+      },
+      "variations": [
+        { "body": "{\"query\":\"{ users { id email } }\"}" },
+        { "body": "{\"query\":\"{ me { id email } }\"}" },
+        { "body": "{\"query\":\"{ orders { id total } }\"}" }
+      ],
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200] },
+          {
+            "kind": "body_contains_any",
+            "patterns": ["\"data\""],
+            "case_insensitive": false
+          },
+          {
+            "kind": "body_contains_any",
+            "patterns": ["\"email\"", "\"id\"", "\"name\""],
+            "case_insensitive": false
+          },
+          {
+            "kind": "body_not_contains_any",
+            "patterns": ["unauthorized", "not authenticated", "must be logged in", "permission denied"],
+            "case_insensitive": true
+          }
+        ]
+      },
+      "fix_hint": "Apply auth at the resolver level, not just at the HTTP layer. Most GraphQL frameworks (Pothos, Nexus, Apollo) support per-field directives or middleware that reject anonymous queries. Pair that with a top-level 'requireAuth' guard so any new resolver you add inherits the protection by default."
+    },
+    {
+      "id": "id-enumeration-via-401-vs-404",
+      "name": "user/resource IDs are enumerable via 401-vs-404 distinction",
+      "description": "Even when an endpoint correctly denies unauthorized access, returning 401 for existing resources and 404 for missing ones lets an attacker tell which IDs exist. Walk the integers and you've enumerated the entire user base.",
+      "category": "idor",
+      "severity": "low",
+      "endpoints_hint": [
+        "/api/users/1",
+        "/api/users/2"
+      ],
+      "request": { "method": "GET" },
+      "variations": [
+        { "method": "GET" }
+      ],
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [401, 403] },
+          {
+            "kind": "body_not_contains_any",
+            "patterns": ["not found", "no such", "doesn't exist", "does not exist"],
+            "case_insensitive": true
+          }
+        ]
+      },
+      "fix_hint": "Return the same response (404 or a generic 401) for both missing and unauthorized resources. The right rule: don't tell attackers whether something exists unless they're allowed to know. A simple `if (!resource || !canAccess(resource, user)) return 404` collapses both cases."
+    },
+    {
+      "id": "pii-in-list-response",
+      "name": "list response leaks PII fields that shouldn't be public",
+      "description": "Even when a list endpoint legitimately shows multiple records (e.g., the user directory of a social app), it often includes private fields by accident — email, phone, dob, address, payment last4. The fix is filtering, not re-locking the endpoint.",
+      "category": "idor",
+      "severity": "high",
+      "endpoints_hint": [
+        "/api/users",
+        "/api/customers",
+        "/api/accounts",
+        "/api/members",
+        "/api/contacts",
+        "/api/directory"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200] },
+          {
+            "kind": "any_of",
+            "conditions": [
+              {
+                "kind": "body_matches_regex",
+                "pattern": "\"email\"\\s*:\\s*\"[^\"]+@[^\"]+\\.[a-z]{2,}",
+                "case_insensitive": true
+              },
+              {
+                "kind": "body_matches_regex",
+                "pattern": "\"phone\"\\s*:\\s*\"\\+?\\d[\\d -]{6,}",
+                "case_insensitive": false
+              },
+              {
+                "kind": "body_matches_regex",
+                "pattern": "\"(ssn|social_security_number)\"\\s*:\\s*\"\\d{3}-?\\d{2}-?\\d{4}\"",
+                "case_insensitive": false
+              },
+              {
+                "kind": "body_matches_regex",
+                "pattern": "\"(dob|date_of_birth|birthday)\"\\s*:\\s*\"\\d{4}-\\d{2}-\\d{2}\"",
+                "case_insensitive": false
+              }
+            ]
+          }
+        ]
+      },
+      "fix_hint": "Define an explicit 'public' serializer for each model and pass every list response through it. Public fields should be a tiny allow-list (id, name, avatar — maybe handle); private fields (email, phone, dob) should require an extra auth step to retrieve, like a self-only /api/users/me."
+    },
+    {
+      "id": "uuid-or-numeric-id-in-error-message",
+      "name": "error response leaks an internal resource ID",
+      "description": "Some apps return error messages like 'cannot delete user 0a1b...c-uuid-...': they fail safely but leak a real internal identifier in the process. An attacker now knows a valid UUID — useful for follow-up attacks against weaker per-id endpoints.",
+      "category": "idor",
+      "severity": "low",
+      "endpoints_hint": [
+        "/api/users/0",
+        "/api/users/-1",
+        "/api/orders/0",
+        "/api/posts/-1",
+        "/api/items/0"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [400, 404, 409, 422, 500] },
+          {
+            "kind": "any_of",
+            "conditions": [
+              {
+                "kind": "body_matches_regex",
+                "pattern": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                "case_insensitive": true
+              },
+              {
+                "kind": "body_matches_regex",
+                "pattern": "\"(user_id|userId|order_id|orderId)\"\\s*:\\s*\\d{3,}",
+                "case_insensitive": false
+              }
+            ]
+          }
+        ]
+      },
+      "fix_hint": "Error messages should not echo internal identifiers back to the requester unless the requester is allowed to know them. Make error bodies static and uninformative; log the rich details server-side instead."
+    }
+  ]
+}
