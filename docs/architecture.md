@@ -6,9 +6,9 @@ How the pieces fit together. This is the contributor-facing doc; the marketing v
 
 1. **The Claude Code plugin layer.** What the user sees: two slash commands (`/isitsafe`, `/snap`) and one subagent (`attacker`). The plugin registers them via `.claude-plugin/plugin.json` and gets loaded when Claude Code finds the package under `~/.claude/plugins/isitsafebro/`.
 
-2. **The MCP server (`src/mcp/server.ts`).** A long-lived child process spawned by Claude Code, talking JSON-RPC over stdio. It registers every tool listed in [the spec's MCP tools table](../isitsafeproject.md#mcp-server-tools). Tools that are implemented today: `snap_inspect`, `snap_commit`, `create_scan_worktree`, `install_and_start`, `cleanup_worktree`, `load_payloads`, `list_endpoints`, `probe_endpoint`. Stubs returning `{ok: true, stub: true}` for the rest pending Day 9-10.
+2. **The MCP server (`src/mcp/server.ts`).** A long-lived child process spawned by Claude Code, talking JSON-RPC over stdio. It registers every tool listed in [the spec's MCP tools table](../isitsafeproject.md#mcp-server-tools), all 13 of them, all real: `snap_inspect`, `snap_commit`, `create_scan_worktree`, `install_and_start`, `restart_dev_server`, `cleanup_worktree`, `list_endpoints`, `load_payloads`, `probe_endpoint`, `apply_fix`, `verify_clean`, `freeze_test`, `merge_fix_branch`.
 
-3. **The signal evaluator (`src/mcp/tools/signal-eval.ts`).** A pure function that decides whether a response matches a payload's success predicate. This is what turns "the AI thinks it found a bug" into "the code knows a bug exists." Same evaluator is reused by `probe_endpoint` during the scan and (eventually) by `verify_clean` to confirm fixes.
+3. **The signal evaluator (`src/mcp/tools/signal-eval.ts`).** A pure function that decides whether a response matches a payload's success predicate. This is what turns "the AI thinks it found a bug" into "the code knows a bug exists." Used by `probe_endpoint` during the scan AND by `verify_clean` to confirm fixes worked — one source of truth across detect → fix → verify → freeze.
 
 4. **The attacker subagent (`agents/attacker.md`).** A Claude Code subagent that lives in its own isolated context. Receives target URL, scope, endpoint list, payload library; produces structured JSON findings. The system prompt enforces the rule "only emit a finding when `signal.matched === true`" — the subagent has no judgment over whether something is a finding; it just runs the signal and reports.
 
@@ -36,7 +36,8 @@ isitsafebro/
 │           ├── probe.ts         # probe_endpoint
 │           ├── endpoints.ts     # list_endpoints
 │           ├── snap.ts          # snap_inspect + snap_commit
-│           └── worktree.ts      # create_scan_worktree + install_and_start + cleanup_worktree
+│           ├── worktree.ts      # create_scan_worktree + install_and_start + restart_dev_server + cleanup_worktree
+│           └── fix.ts           # apply_fix + verify_clean + freeze_test + merge_fix_branch
 ├── payloads/
 │   ├── SCHEMA.md
 │   ├── auth.json                # 10 patterns
@@ -52,7 +53,8 @@ isitsafebro/
 │   ├── test-snap.mjs            # e2e: /snap pipeline
 │   ├── test-worktree.mjs        # e2e: worktree lifecycle
 │   ├── test-payloads.mjs        # e2e: load_payloads over live MCP
-│   └── test-attack.mjs          # e2e: full attack loop, 24 verified findings
+│   ├── test-attack.mjs          # e2e: full attack loop, 24 verified findings
+│   └── test-fix-loop.mjs        # e2e: scan→fix→verify→freeze→merge
 ├── docs/
 │   ├── architecture.md          # this file
 │   └── false-positives.md
@@ -123,7 +125,7 @@ When complete (Day 10), the slash command will orchestrate:
                        cleanup_worktree (branch stays)
 ```
 
-Today the steps above the dashed line work end-to-end (proven by `scripts/test-attack.mjs`). The steps below (apply_fix onwards) are scaffolded but not implemented — that's Day 9-10.
+Every step is implemented and proven end-to-end. The scan side (above `surface findings`) is exercised by `scripts/test-attack.mjs` (24 verified findings, 0 false positives across all 5 categories against the vuln fixture). The fix side (`apply_fix` through `cleanup_worktree`) is exercised by `scripts/test-fix-loop.mjs`, which scans, hand-applies fixes for two specific bugs, restarts the dev server, asserts that `verify_clean` correctly cleans those two while leaving the other seven still vulnerable, freezes the cleaned findings as regression tests under `.isitsafebro/tests/`, and merges the scan branch into main.
 
 ## The /snap flow
 
@@ -174,6 +176,7 @@ Why this matters: see [false-positives.md](./false-positives.md).
   - `test-worktree.mjs` — sample-app fixture, worktree create + install_and_start + http probe + cleanup.
   - `test-payloads.mjs` — load every category, sanity-check structure.
   - `test-attack.mjs` — vuln-app fixture, scan all 5 categories, assert 24 findings + 0 false positives.
+  - `test-fix-loop.mjs` — vuln-app fixture, full scan→fix→verify→freeze→merge. Assert apply_fix lands commits, restart picks up code, verify_clean correctly partitions cleaned vs stillVulnerable, freeze_test writes the regression files, merge_fix_branch lands the merge on main.
 
 Run them all: `npm run test:e2e`.
 
