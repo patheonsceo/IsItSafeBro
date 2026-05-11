@@ -334,6 +334,107 @@ function freezeTest(input: FreezeTestInput): FreezeTestResult {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  merge_fix_branch                                                          */
+/* -------------------------------------------------------------------------- */
+
+interface MergeFixBranchInput {
+  cwd?: string;
+  scanBranch: string;
+  target?: string;
+  commitMessage?: string;
+}
+
+interface MergeFixBranchResult {
+  ok: boolean;
+  mergedInto?: string;
+  scanBranch?: string;
+  mergeSha?: string;
+  conflicts?: string[];
+  error?: string;
+}
+
+async function mergeFixBranch(input: MergeFixBranchInput): Promise<MergeFixBranchResult> {
+  const cwd = resolvePath(input.cwd ?? process.cwd());
+  const git: SimpleGit = simpleGit({ baseDir: cwd });
+  if (!(await git.checkIsRepo())) {
+    return { ok: false, error: `${cwd} is not a git repository` };
+  }
+  const status = await git.status();
+  const currentBranch = status.current ?? "(detached)";
+  const target = input.target ?? currentBranch;
+
+  if (target !== currentBranch) {
+    return {
+      ok: false,
+      error: `target branch is '${target}' but you're currently on '${currentBranch}'. checkout '${target}' first.`,
+    };
+  }
+
+  // refuse to merge into a dirty working tree
+  if (!status.isClean()) {
+    const dirty = [
+      ...status.modified.map((f) => `M ${f}`),
+      ...status.created.map((f) => `A ${f}`),
+      ...status.deleted.map((f) => `D ${f}`),
+      ...status.staged.map((f) => `S ${f}`),
+    ];
+    return {
+      ok: false,
+      mergedInto: target,
+      scanBranch: input.scanBranch,
+      error: `working tree is dirty; commit or stash changes before merging.\n  ${dirty.join("\n  ")}`,
+    };
+  }
+
+  // verify scanBranch exists
+  try {
+    const branches = await git.branchLocal();
+    if (!branches.all.includes(input.scanBranch)) {
+      return {
+        ok: false,
+        error: `scan branch '${input.scanBranch}' not found locally`,
+      };
+    }
+  } catch (err) {
+    return { ok: false, error: `failed to list branches: ${(err as Error).message}` };
+  }
+
+  const commitMessage =
+    input.commitMessage ?? `chore: merge isitsafebro fixes from ${input.scanBranch}`;
+
+  try {
+    await git.raw(["merge", "--no-ff", input.scanBranch, "-m", commitMessage]);
+  } catch (err) {
+    // check whether the failure was a conflict
+    const postStatus = await git.status();
+    if (postStatus.conflicted.length > 0) {
+      return {
+        ok: false,
+        mergedInto: target,
+        scanBranch: input.scanBranch,
+        conflicts: postStatus.conflicted,
+        error:
+          `merge produced ${postStatus.conflicted.length} conflict(s). resolve them and 'git commit', or run 'git merge --abort' to roll back.`,
+      };
+    }
+    return {
+      ok: false,
+      mergedInto: target,
+      scanBranch: input.scanBranch,
+      error: `git merge failed: ${(err as Error).message}`,
+    };
+  }
+
+  const head = (await git.revparse(["HEAD"])).trim();
+  return {
+    ok: true,
+    mergedInto: target,
+    scanBranch: input.scanBranch,
+    mergeSha: head,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /*  MCP wiring                                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -451,6 +552,36 @@ export function registerFixTools(server: McpServer): void {
           success_signal: args.finding.success_signal,
           evidence: args.finding.evidence,
         },
+      });
+      return asContent(result);
+    },
+  );
+
+  server.registerTool(
+    "merge_fix_branch",
+    {
+      title: "Merge the scan branch into the user's target branch (--no-ff)",
+      description:
+        "Run `git merge --no-ff <scanBranch>` to land the isitsafebro-applied fixes into the user's working branch. Refuses if (a) the target is different from the current branch (asks the user to checkout first), (b) the working tree is dirty (might cause conflicts), or (c) the scan branch doesn't exist locally. On conflict, leaves the merge state in place (caller can decide to `git merge --abort` or resolve manually) and returns the list of conflicted files so the orchestrator can surface them clearly.",
+      inputSchema: z.object({
+        cwd: z.string().optional(),
+        scanBranch: z.string(),
+        target: z
+          .string()
+          .optional()
+          .describe("Target branch. If different from current, returns an error asking the user to checkout first."),
+        commitMessage: z
+          .string()
+          .optional()
+          .describe("Merge commit message. Defaults to a 'chore: merge isitsafebro fixes from <branch>'."),
+      }),
+    },
+    async (args) => {
+      const result = await mergeFixBranch({
+        cwd: args.cwd,
+        scanBranch: args.scanBranch,
+        target: args.target,
+        commitMessage: args.commitMessage,
       });
       return asContent(result);
     },

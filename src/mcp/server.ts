@@ -15,7 +15,6 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -35,18 +34,9 @@ const server = new McpServer(
   { name: pkg.name, version: pkg.version },
   {
     instructions:
-      "isitsafebro mcp server. snap_inspect + snap_commit are real; remaining tools are stubs returning {ok: true, stub: true} pending later days of the build.",
+      "isitsafebro mcp server. all 12 spec tools are implemented: snap_inspect, snap_commit, create_scan_worktree, install_and_start, restart_dev_server, cleanup_worktree, list_endpoints, load_payloads, probe_endpoint (with built-in signal evaluator), apply_fix, verify_clean, freeze_test, merge_fix_branch.",
   },
 );
-
-/** Helper: standard placeholder response while tools are stubs. */
-function stub(tool: string) {
-  const body = { ok: true, stub: true, tool };
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(body) }],
-    structuredContent: body,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // /snap support — implemented in ./tools/snap.ts. Exposes snap_inspect and
@@ -86,25 +76,6 @@ registerProbeTools(server);
 // ---------------------------------------------------------------------------
 
 registerFixTools(server);
-
-// ---------------------------------------------------------------------------
-// Merging
-// ---------------------------------------------------------------------------
-
-server.registerTool(
-  "merge_fix_branch",
-  {
-    title: "Merge the scan's fix branch into the user's main branch",
-    description:
-      "Run `git merge --no-ff <scan-branch>` into the user's working branch, surfacing conflicts cleanly. Only invoked when the user opts into --auto or accepts the merge prompt at the end of /isitsafe.",
-    inputSchema: z.object({
-      cwd: z.string().optional(),
-      scanBranch: z.string(),
-      target: z.string().optional().describe("Target branch; defaults to current."),
-    }),
-  },
-  async () => stub("merge_fix_branch"),
-);
 
 // ---------------------------------------------------------------------------
 // Boot
