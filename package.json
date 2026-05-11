@@ -54,6 +54,7 @@
     "test:e2e:snap": "npm run build && node scripts/test-snap.mjs",
     "test:e2e:worktree": "npm run build && node scripts/test-worktree.mjs",
     "test:e2e:payloads": "npm run build && node scripts/test-payloads.mjs",
+    "test:e2e:attack": "npm run build && node scripts/test-attack.mjs",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
