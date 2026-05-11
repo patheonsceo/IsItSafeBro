@@ -70,23 +70,24 @@ most security tools were built for people who already know what they're looking 
 
 ## status (be honest)
 
-this is alpha. some bits are real today, some are coming this week:
+alpha but feature-complete. the product is whole; we haven't published it to npm yet.
 
-**works right now:**
+**works end-to-end:**
 
-- the plugin installs and registers in claude code
-- `/snap` is fully wired and runs over the real MCP server. tested on every common conventional-commit case, 19 unit tests, 1 end-to-end test against a messy fixture repo.
-- the attack engine is real: 42 attack patterns across 5 categories (auth, api, secrets, idor, prompt injection), each with a structured success signal that prevents false positives. proven end-to-end against a deliberately-vulnerable fixture: 24 verified findings, 0 false positives.
-- the supporting MCP tools work: `load_payloads`, `list_endpoints` (parses Next.js app/pages routers + Express/Fastify/Hono via regex + HTTP crawl), `probe_endpoint` (with the signal evaluator built in), `create_scan_worktree`, `install_and_start`, `cleanup_worktree`.
+- the plugin installs and registers in claude code via `isitsafebro register`.
+- `/snap` runs over the real MCP server. 19 unit tests + 1 e2e against a messy fixture repo.
+- `/isitsafe` runs the full scan → fix → verify → freeze → merge loop. when the attacker finds something, the user picks which to fix, fixes land on the scan branch as conventional commits, the dev server restarts, every fix is re-verified with the same signal that detected it, verified fixes get serialized as regression tests under `.isitsafebro/tests/`, and the scan branch merges into main.
+- the attack engine: 42 attack patterns across 5 categories (auth, api, secrets, idor, prompt injection), each with a structured success signal that prevents false positives. proven end-to-end against a deliberately-vulnerable fixture: 24 verified findings, 0 false positives.
+- all 13 MCP tools real: `snap_inspect`, `snap_commit`, `create_scan_worktree`, `install_and_start`, `restart_dev_server`, `cleanup_worktree`, `list_endpoints` (parses Next.js app/pages routers + Express/Fastify/Hono via regex + HTTP crawl), `load_payloads`, `probe_endpoint` (with the signal evaluator built in), `apply_fix` (with path-traversal protection), `verify_clean`, `freeze_test`, `merge_fix_branch`.
 - the attacker subagent has its real system prompt and follows the structured-signal contract (no fabricated findings).
+- 5 e2e suites prove the surfaces: `test:e2e:snap`, `test:e2e:worktree`, `test:e2e:payloads`, `test:e2e:attack` (24 findings, 0 FPs), `test:e2e:fix` (full attack→fix→verify→freeze→merge against the vuln fixture).
 
-**not wired yet (lands in the next few days):**
+**not done yet — but it's not code:**
 
-- the `/isitsafe` slash command itself still shows a "wiring this up" message. the *engine* underneath works (see the e2e proof) but the user-facing orchestration that ties scan → review → fix → verify → freeze → merge is not in yet.
-- `apply_fix`, `restart_dev_server`, `verify_clean`, `freeze_test`, `merge_fix_branch` are scaffolded but not implemented.
-- the `--auto` flag.
+- dogfood against three real vibe-coded apps (lovable, bolt, a friend's project). this is where payload tuning happens and where the install/run/teardown UX gets bug-bashed.
+- launch.
 
-if you're a tinkerer who wants to try the attack engine before `/isitsafe` lands, see [`docs/architecture.md`](./docs/architecture.md) for how to call the MCP tools directly.
+these are tracked in [CHANGELOG.md](./CHANGELOG.md) as Days 12-14 of the build sprint.
 
 ---
 
