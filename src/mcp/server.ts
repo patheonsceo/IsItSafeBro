@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { registerSnapTools } from "./tools/snap.js";
 import { registerWorktreeTools } from "./tools/worktree.js";
 import { registerPayloadTools } from "./tools/payloads.js";
+import { registerProbeTools } from "./tools/probe.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -99,27 +100,11 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// Probing
+// Probing — implemented in ./tools/probe.ts. Includes the structured signal
+// evaluator built in so a single tool call returns both response and verdict.
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "probe_endpoint",
-  {
-    title: "Send a single HTTP probe to the target app",
-    description:
-      "Issue an HTTP request to the dev server with the given method, path, headers, and body. Rate-limited per host. Returns the response status, headers, and body excerpt. Never destructive without explicit confirmation.",
-    inputSchema: z.object({
-      url: z.string(),
-      method: z
-        .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
-        .default("GET"),
-      path: z.string(),
-      headers: z.record(z.string(), z.string()).optional(),
-      body: z.string().optional(),
-    }),
-  },
-  async () => stub("probe_endpoint"),
-);
+registerProbeTools(server);
 
 // ---------------------------------------------------------------------------
 // Fixing
