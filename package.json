@@ -50,11 +50,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "npm run build && node scripts/test-snap.mjs && node scripts/test-worktree.mjs && node scripts/test-payloads.mjs && node scripts/test-attack.mjs",
+    "test:e2e": "npm run build && node scripts/test-snap.mjs && node scripts/test-worktree.mjs && node scripts/test-payloads.mjs && node scripts/test-attack.mjs && node scripts/test-fix-loop.mjs",
     "test:e2e:snap": "npm run build && node scripts/test-snap.mjs",
     "test:e2e:worktree": "npm run build && node scripts/test-worktree.mjs",
     "test:e2e:payloads": "npm run build && node scripts/test-payloads.mjs",
     "test:e2e:attack": "npm run build && node scripts/test-attack.mjs",
+    "test:e2e:fix": "npm run build && node scripts/test-fix-loop.mjs",
     "clean": "rm -rf dist"
   },
   "devDependencies": {

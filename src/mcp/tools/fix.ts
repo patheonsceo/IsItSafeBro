@@ -370,19 +370,24 @@ async function mergeFixBranch(input: MergeFixBranchInput): Promise<MergeFixBranc
     };
   }
 
-  // refuse to merge into a dirty working tree
-  if (!status.isClean()) {
-    const dirty = [
-      ...status.modified.map((f) => `M ${f}`),
-      ...status.created.map((f) => `A ${f}`),
-      ...status.deleted.map((f) => `D ${f}`),
-      ...status.staged.map((f) => `S ${f}`),
-    ];
+  // refuse to merge if there are uncommitted modifications that could
+  // collide with the merge. UNTRACKED files (status.not_added) are fine —
+  // git itself allows merging into a tree with untracked files as long as
+  // the merge doesn't try to overwrite them, and we don't want to block
+  // legitimate cases like frozen-test files that haven't been committed
+  // yet.
+  const blockingDirty = [
+    ...status.modified.map((f) => `M ${f}`),
+    ...status.deleted.map((f) => `D ${f}`),
+    ...status.staged.map((f) => `S ${f}`),
+    ...status.renamed.map((r) => `R ${r.from} -> ${r.to}`),
+  ];
+  if (blockingDirty.length > 0) {
     return {
       ok: false,
       mergedInto: target,
       scanBranch: input.scanBranch,
-      error: `working tree is dirty; commit or stash changes before merging.\n  ${dirty.join("\n  ")}`,
+      error: `working tree has uncommitted modifications; commit or stash before merging.\n  ${blockingDirty.join("\n  ")}`,
     };
   }
 
