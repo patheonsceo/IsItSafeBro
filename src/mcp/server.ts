@@ -87,26 +87,6 @@ registerProbeTools(server);
 
 registerFixTools(server);
 
-server.registerTool(
-  "freeze_test",
-  {
-    title: "Save a confirmed exploit as a permanent regression test",
-    description:
-      "Persist a verified, now-patched exploit under `.isitsafebro/tests/<category>/<id>.json` so future scans always re-run it and catch silent regressions.",
-    inputSchema: z.object({
-      cwd: z.string().optional(),
-      finding: z.object({
-        id: z.string(),
-        category: z.enum(["auth", "api", "prompt", "secrets", "idor", "other"]),
-        endpoint: z.string(),
-        payload: z.record(z.string(), z.unknown()),
-        evidence: z.string(),
-      }),
-    }),
-  },
-  async () => stub("freeze_test"),
-);
-
 // ---------------------------------------------------------------------------
 // Merging
 // ---------------------------------------------------------------------------

@@ -22,14 +22,22 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { resolve as resolvePath, dirname, sep } from "node:path";
+import { resolve as resolvePath, dirname, sep, join } from "node:path";
 import {
   COMMIT_TYPES,
   type CommitType,
   validateCommit,
   formatCommitMessage,
 } from "./snap.js";
-import { SignalSchema, HttpMethodSchema, type Signal } from "./payload-schema.js";
+import {
+  SignalSchema,
+  HttpMethodSchema,
+  PayloadCategorySchema,
+  SeveritySchema,
+  type Signal,
+  type PayloadCategory,
+  type Severity,
+} from "./payload-schema.js";
 import { probeEndpoint } from "./probe.js";
 
 function asContent<T>(payload: T) {
@@ -251,6 +259,81 @@ async function verifyClean(input: VerifyCleanInput): Promise<VerifyCleanResult> 
 }
 
 /* -------------------------------------------------------------------------- */
+/*  freeze_test                                                               */
+/* -------------------------------------------------------------------------- */
+
+const FROZEN_TEST_SCHEMA_VERSION = 1;
+
+interface FreezeTestInput {
+  cwd?: string;
+  finding: {
+    payload_id: string;
+    category: PayloadCategory;
+    severity: Severity;
+    name?: string;
+    description?: string;
+    request: {
+      method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
+      path: string;
+      headers?: Record<string, string>;
+      body?: string;
+    };
+    success_signal: Signal;
+    evidence?: string;
+  };
+}
+
+interface FreezeTestResult {
+  ok: boolean;
+  path?: string;
+  error?: string;
+}
+
+/** Filesystem-safe-ish slug of an endpoint (METHOD + path) for use in filenames. */
+function slugifyEndpoint(method: string, path: string): string {
+  const cleaned = path.replace(/[^A-Za-z0-9._-]/g, "_").replace(/_+/g, "_");
+  return `${method.toUpperCase()}_${cleaned}`.replace(/^_|_$/g, "");
+}
+
+function freezeTest(input: FreezeTestInput): FreezeTestResult {
+  const cwd = resolvePath(input.cwd ?? process.cwd());
+  if (!existsSync(cwd)) {
+    return { ok: false, error: `cwd does not exist: ${cwd}` };
+  }
+  const { finding } = input;
+  const categoryDir = join(cwd, ".isitsafebro", "tests", finding.category);
+  try {
+    mkdirSync(categoryDir, { recursive: true });
+  } catch (err) {
+    return { ok: false, error: `mkdir ${categoryDir} failed: ${(err as Error).message}` };
+  }
+
+  const endpointSlug = slugifyEndpoint(finding.request.method, finding.request.path);
+  const filename = `${finding.payload_id}--${endpointSlug}.json`;
+  const outPath = join(categoryDir, filename);
+
+  const record = {
+    schema_version: FROZEN_TEST_SCHEMA_VERSION,
+    payload_id: finding.payload_id,
+    category: finding.category,
+    severity: finding.severity,
+    ...(finding.name ? { name: finding.name } : {}),
+    ...(finding.description ? { description: finding.description } : {}),
+    frozen_at: new Date().toISOString(),
+    request: finding.request,
+    success_signal: finding.success_signal,
+    ...(finding.evidence ? { evidence: finding.evidence } : {}),
+  };
+
+  try {
+    writeFileSync(outPath, JSON.stringify(record, null, 2) + "\n");
+  } catch (err) {
+    return { ok: false, error: `write ${outPath} failed: ${(err as Error).message}` };
+  }
+  return { ok: true, path: outPath };
+}
+
+/* -------------------------------------------------------------------------- */
 /*  MCP wiring                                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -322,6 +405,52 @@ export function registerFixTools(server: McpServer): void {
           success_signal: f.success_signal,
         })),
         timeoutMs: args.timeoutMs,
+      });
+      return asContent(result);
+    },
+  );
+
+  server.registerTool(
+    "freeze_test",
+    {
+      title: "Save a verified-and-now-fixed exploit as a regression test",
+      description:
+        "Persist a fixed finding as a self-contained regression test under <cwd>/.isitsafebro/tests/<category>/<payload_id>--<endpoint-slug>.json. The file contains everything needed to replay the exploit on a future scan (request + success_signal) plus metadata (severity, name, evidence excerpt, frozen-at timestamp). Future /isitsafe runs can replay every frozen test first; if any signal matches again, that's a regression — flagged loudly. Idempotent: re-freezing the same payload_id + endpoint overwrites the existing file with a fresh frozen_at.",
+      inputSchema: z.object({
+        cwd: z
+          .string()
+          .optional()
+          .describe("Project root (the user's repo, not the scan worktree). Defaults to process.cwd()."),
+        finding: z.object({
+          payload_id: z.string(),
+          category: PayloadCategorySchema,
+          severity: SeveritySchema,
+          name: z.string().optional(),
+          description: z.string().optional(),
+          request: z.object({
+            method: HttpMethodSchema,
+            path: z.string(),
+            headers: z.record(z.string(), z.string()).optional(),
+            body: z.string().optional(),
+          }),
+          success_signal: SignalSchema,
+          evidence: z.string().optional(),
+        }),
+      }),
+    },
+    async (args) => {
+      const result = freezeTest({
+        cwd: args.cwd,
+        finding: {
+          payload_id: args.finding.payload_id,
+          category: args.finding.category,
+          severity: args.finding.severity,
+          name: args.finding.name,
+          description: args.finding.description,
+          request: args.finding.request,
+          success_signal: args.finding.success_signal,
+          evidence: args.finding.evidence,
+        },
       });
       return asContent(result);
     },
