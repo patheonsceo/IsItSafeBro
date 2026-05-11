@@ -251,7 +251,19 @@ app.get("/api/customers/1", (_req, res) => {
   );
 });
 
-// VULN-IDOR-2: list endpoint exposes records with PII
+// VULN-IDOR-2a: list endpoint at /api/users (covered by unauthed-list and pii-in-list payloads)
+app.get("/api/users", (_req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(
+    JSON.stringify([
+      { id: 1, name: "Alice", email: "alice@example.com", phone: "+1-555-0001" },
+      { id: 2, name: "Bob", email: "bob@example.com", phone: "+1-555-0002" },
+      { id: 3, name: "Carol", email: "carol@example.com", phone: "+1-555-0003" },
+    ]),
+  );
+});
+
+// VULN-IDOR-2b: list endpoint exposes records with PII
 app.get("/api/members", (_req, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(
@@ -271,17 +283,34 @@ app.get("/api/members", (_req, res) => {
 
 app.post("/api/chat", (req, res) => {
   const body = req.__body ?? "";
-  const m = body.match(/ISITSAFEBRO_[A-Z0-9_]+_OK/);
+  // Extract user content from common chat-request shapes.
+  let userContent = body;
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && Array.isArray(parsed.messages)) {
+      userContent = parsed.messages.map((m) => String(m?.content ?? "")).join(" ");
+    } else if (parsed && typeof parsed === "object") {
+      const k = ["prompt", "message", "input", "text", "content"].find(
+        (key) => typeof parsed[key] === "string",
+      );
+      if (k) userContent = String(parsed[k]);
+    }
+  } catch {
+    // body not JSON; treat as raw user content
+  }
+  // The bug being modeled: this 'LLM' obeys whatever the user says. If a
+  // canary instruction is present, echo the user's content back as the
+  // assistant message — that's enough to satisfy any prompt-injection
+  // signal that looks for the canary plus contextual phrases like
+  // "injection_succeeded".
+  const canary = userContent.match(/ISITSAFEBRO_[A-Z0-9_]+_OK/);
   res.writeHead(200, { "Content-Type": "application/json" });
-  if (m) {
+  if (canary) {
     res.end(
       JSON.stringify({
         choices: [
           {
-            message: {
-              role: "assistant",
-              content: m[0],
-            },
+            message: { role: "assistant", content: userContent },
           },
         ],
       }),
