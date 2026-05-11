@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * isitsafebro MCP server — day-2 scaffold.
+ * isitsafebro MCP server.
  *
  * Registers every tool listed in the spec (table under "MCP server tools").
- * Each handler returns {ok: true} for now. Real implementations land on
- * later days of the build, one tool per commit where possible.
+ * Implementation lands incrementally; each tool is one commit. Tools without
+ * an implementation yet return {ok: true, stub: true} as a placeholder.
+ *
+ * Currently implemented: snap_inspect, snap_commit (via ./tools/snap.ts).
  *
  * TODO open question: spec places source at `mcp/server.ts`; we keep it
  * under `src/mcp/server.ts` so the tsc build flows cleanly into `dist/`
@@ -17,6 +19,7 @@ import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { registerSnapTools } from "./tools/snap.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -27,7 +30,7 @@ const server = new McpServer(
   { name: pkg.name, version: pkg.version },
   {
     instructions:
-      "isitsafebro day-2 scaffold. every tool currently returns {ok: true}. real implementations land in following commits.",
+      "isitsafebro mcp server. snap_inspect + snap_commit are real; remaining tools are stubs returning {ok: true, stub: true} pending later days of the build.",
   },
 );
 
@@ -41,28 +44,12 @@ function stub(tool: string) {
 }
 
 // ---------------------------------------------------------------------------
-// /snap support
+// /snap support — implemented in ./tools/snap.ts. Exposes snap_inspect and
+// snap_commit; the calling Claude session plans the commit split, the tools
+// execute it mechanically with server-side validation.
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "snap",
-  {
-    title: "Snap uncommitted work into logical commits",
-    description:
-      "Read the working tree's uncommitted diff, cluster hunks into logical units, and produce N conventional commits (feat/fix/refactor/etc.). Used standalone via /snap and auto-invoked by /isitsafe before any attack.",
-    inputSchema: z.object({
-      cwd: z
-        .string()
-        .optional()
-        .describe("Working directory of the target repo. Defaults to process.cwd()."),
-      dryRun: z
-        .boolean()
-        .optional()
-        .describe("If true, return the proposed commit plan without committing."),
-    }),
-  },
-  async () => stub("snap"),
-);
+registerSnapTools(server);
 
 // ---------------------------------------------------------------------------
 // Worktree lifecycle
