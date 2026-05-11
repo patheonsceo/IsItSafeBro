@@ -1,0 +1,10 @@
+{
+  "name": "isitsafebro-fixture-vuln-app",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Deliberately-vulnerable zero-dep fixture exercising every payload in payloads/auth.json. NOT FOR PRODUCTION USE.",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js"
+  }
+}
