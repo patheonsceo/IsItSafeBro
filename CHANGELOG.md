@@ -8,11 +8,25 @@ isitsafebro is pre-1.0. **Nothing has been published to npm yet.** Entries below
 
 ## Unreleased
 
+### Day 9-10 — the fix loop, end-to-end
+
+- **Added:** `src/mcp/tools/fix.ts` with four MCP tools.
+  - `apply_fix` — full-file replacements into the scan worktree, committed on the scan branch with a `validateCommit`-validated conventional message. Reuses snap's subject rules (lowercase, single line, ≤ 60 chars, no trailing period). Resolves file paths and rejects any that escape the worktree (path-traversal protection).
+  - `verify_clean` — replays each captured `(request, success_signal)` pair via `probe_endpoint`. Returns per-finding `{stillVulnerable, matched, explanation}` plus aggregate `cleaned[]` and `stillVulnerable[]`. Uses the same signal evaluator as the original detection — one source of truth across detect → fix → verify.
+  - `freeze_test` — serializes a verified-and-now-fixed exploit as a self-contained regression test at `<cwd>/.isitsafebro/tests/<category>/<payload_id>--<endpoint-slug>.json` (schema_version 1, with the request + signal + frozen-at timestamp + evidence). Future scans can replay these to catch regressions.
+  - `merge_fix_branch` — `git merge --no-ff <scanBranch>` into the user's target branch. Refuses if (a) target ≠ current branch (asks user to checkout first), (b) there are uncommitted M/D/S/R modifications (untracked files are fine — git itself permits merging into a tree with untracked files), (c) the scan branch doesn't exist. On conflict, returns the file list and leaves the merge state in place for manual resolution.
+- **Added:** `restart_dev_server` in `src/mcp/tools/worktree.ts`. Looks up the running server in `runningServers`, kills its process group via the shared `killProcessGroup` helper, then re-runs `installAndStart` with the saved script and previous port as `preferredPort` (URL stays stable across restart most of the time).
+- **Changed:** `src/mcp/server.ts` dropped the `stub` helper and `z` import. All 13 spec tools are real and registered.
+- **Changed:** `commands/isitsafe.md` rewritten from a day-2 stub into the full 14-step orchestration runbook (parse → confirm → snap → worktree → install → list_endpoints → spawn attacker → surface findings → user picks → apply_fix per pick → restart → verify_clean → freeze_test per cleaned → merge_fix_branch or merge-prompt → cleanup). Explicit error handling for every common failure mode (dev server timeout, attacker timeout, fix breaks the app, merge conflict, user abort).
+- **Added:** `scripts/test-fix-loop.mjs` end-to-end proof. Seeds a temp git repo from the vuln-app fixture, scans (9 findings), applies hand-crafted patches for 2 specific bugs via `apply_fix` (one commit each), restarts, asserts `verify_clean` correctly puts the fixed two in `cleaned[]` AND leaves the other seven in `stillVulnerable[]`, freezes the two cleaned findings, merges the scan branch into main, asserts the git log contains both fixes plus the merge commit. Exposed as `test:e2e:fix`; chained into `test:e2e`.
+- **Result:** the full scan → fix → verify → freeze → merge loop runs end-to-end. The structured-signal architecture pays off: the same predicate that detected each bug is the test the fix has to pass.
+
 ### Day 11 — install + docs
 
-- **Added:** `isitsafebro register` / `unregister` / `status` CLI subcommands. `register` symlinks the plugin into `~/.claude/plugins/isitsafebro` (honors `CLAUDE_HOME`). idempotent; refuses to overwrite a non-symlink.
+- **Added:** `isitsafebro register` / `unregister` / `status` CLI subcommands. `register` symlinks the plugin into `~/.claude/plugins/isitsafebro` (honors `CLAUDE_HOME`). Idempotent; refuses to overwrite a non-symlink.
 - **Added:** full README rewrite with honest install/run/uninstall instructions, status section separating what's wired from what's coming, and trimmed real e2e output as a demo until we record an asciinema.
 - **Added:** `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`, `docs/architecture.md`, `docs/false-positives.md`.
+- **Added:** `CLAUDE.md` at the repo root. Claude Code auto-loads it on every session opened here. Compact operating manual for AI agents and humans-using-claude: locked design decisions, voice rules (with the no-co-author-trailer rule prominent), build/test commands, how to add a payload or MCP tool, common pitfalls (path traversal in apply_fix, bypassing the signal evaluator, touching the user's main working tree, missing detached spawn for tree-kill), and a "when in doubt — ASK" line.
 - **Changed:** `bin/isitsafebro --help` now lists `register`, `unregister`, `status` instead of the day-2 placeholder text.
 
 ---
@@ -95,10 +109,13 @@ Pre-release build log. One commit-cluster per spec day; not yet published.
 ## Versioning
 
 - Pre-1.0: minor bumps for feature additions, patch bumps for fixes.
-- `0.1.0` will be cut when `/isitsafe` runs the full scan → fix → freeze → merge loop end-to-end and we've dogfooded against at least three real vibe-coded apps.
+- `0.1.0` will be cut after we've dogfooded the full scan → fix → freeze → merge loop against at least three real vibe-coded apps (Day 12 work).
 - `1.0.0` is reserved for the launch tagged in the spec (Day 14).
 
-## Skipped / postponed
+## Remaining
 
-- Days 9-10 (fix loop, `apply_fix`, `restart_dev_server`, `verify_clean`, `freeze_test`, `merge_fix_branch`, `/isitsafe` orchestration, `--auto`) are paused while docs ship. Coming back to them next.
-- Days 12-14 (dogfood, bug bash, launch) require the fix loop. Will be addressed after.
+- **Day 12** — dogfood against three real vibe-coded apps (Lovable / Bolt / a friend's project). Find real bugs, tune payloads.
+- **Day 13** — bug bash. Make sure `npm install -g isitsafebro && isitsafebro register && /isitsafe` works in under two minutes from cold install. Smooth the rough edges surfaced by Day 12.
+- **Day 14** — launch posts (r/programming, r/ClaudeAI, r/webdev, Hacker News, X).
+
+These are activities, not features. The product is feature-complete: every spec'd tool is implemented and verified end-to-end.
