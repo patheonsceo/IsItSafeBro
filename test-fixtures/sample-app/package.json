@@ -1,0 +1,10 @@
+{
+  "name": "isitsafebro-fixture-sample-app",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Minimal zero-dep Node fixture used by isitsafebro's worktree integration tests.",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js"
+  }
+}
