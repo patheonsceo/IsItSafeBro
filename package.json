@@ -28,7 +28,11 @@
   },
   "files": [
     "dist",
-    "plugin",
+    ".claude-plugin",
+    ".mcp.json",
+    "commands",
+    "agents",
+    "skills",
     "payloads",
     "prompts",
     "scripts",
