@@ -152,6 +152,152 @@ app.get("/", (_req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────── */
+/*  Day-8 API category bugs                                                */
+/* ─────────────────────────────────────────────────────────────────────── */
+
+function getQuery(req) {
+  const idx = req.url.indexOf("?");
+  if (idx < 0) return new URLSearchParams();
+  return new URLSearchParams(req.url.slice(idx + 1));
+}
+
+// VULN-API-1: error-based SQL injection on /api/products
+app.get("/api/products", (req, res) => {
+  const q = getQuery(req);
+  const probe = q.get("name") ?? q.get("id") ?? "";
+  if (/['"`;]/.test(probe)) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        error:
+          "PrismaClientKnownRequestError: syntax error at or near \"'\" at position 32 in: SELECT * FROM products WHERE name = '" +
+          probe +
+          "'",
+      }),
+    );
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify([{ id: 1, name: "widget" }]));
+});
+
+// VULN-API-2: reflected XSS in /search?q=
+app.get("/search", (req, res) => {
+  const q = getQuery(req).get("q") ?? "";
+  res.writeHead(200, { "Content-Type": "text/html" });
+  res.end(`<html><body><h1>results for: ${q}</h1></body></html>`);
+});
+
+// VULN-API-3: path traversal on /api/file
+app.get("/api/file", (req, res) => {
+  if (
+    req.url.includes("../") ||
+    req.url.toLowerCase().includes("..%2f") ||
+    req.url.includes("/etc/passwd")
+  ) {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(
+      "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n",
+    );
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "application/octet-stream" });
+  res.end("fake file content");
+});
+
+/* ─────────────────────────────────────────────────────────────────────── */
+/*  Day-8 secrets category bugs                                            */
+/* ─────────────────────────────────────────────────────────────────────── */
+
+// VULN-SEC-1: .env served
+app.get("/.env", (_req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end(
+    "DATABASE_URL=postgres://app:redacted@localhost:5432/app\nSTRIPE_SECRET_KEY=sk_live_fake_isitsafebrofixture_DO_NOT_USE\nJWT_SECRET=my-very-secret-key\nNEXT_PUBLIC_APP_URL=http://localhost:3000\n",
+  );
+});
+
+// VULN-SEC-2: /api/config leaks server secrets
+app.get("/api/config", (_req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(
+    JSON.stringify({
+      public: { stripeKey: "pk_live_fixture", appUrl: "http://localhost:3000" },
+      server: {
+        STRIPE_SECRET_KEY: "sk_live_fake_isitsafebrofixture_serverdotEXAMPLE",
+        JWT_SECRET: "my-very-secret-key",
+        DATABASE_URL: "postgres://app:redacted@localhost:5432/app",
+        OPENAI_API_KEY: "sk-fakefixtureopenaikeyABCDEFGHIJKLMNOPQRSTUVWXYZ123",
+      },
+    }),
+  );
+});
+
+/* ─────────────────────────────────────────────────────────────────────── */
+/*  Day-8 IDOR category bugs                                               */
+/* ─────────────────────────────────────────────────────────────────────── */
+
+// VULN-IDOR-1: per-user resource without auth
+app.get("/api/customers/1", (_req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(
+    JSON.stringify({
+      id: 1,
+      email: "alice@example.com",
+      name: "Alice",
+      phone: "+1-555-0001",
+      created_at: "2024-01-01T00:00:00Z",
+    }),
+  );
+});
+
+// VULN-IDOR-2: list endpoint exposes records with PII
+app.get("/api/members", (_req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(
+    JSON.stringify([
+      { id: 1, name: "Alice", email: "alice@example.com", phone: "+1-555-0001" },
+      { id: 2, name: "Bob", email: "bob@example.com", phone: "+1-555-0002" },
+    ]),
+  );
+});
+
+/* ─────────────────────────────────────────────────────────────────────── */
+/*  Day-8 prompt category bug                                              */
+/*  Naive "LLM" that scans the request body for any ISITSAFEBRO_*_OK token */
+/*  and echoes it back as the assistant message — equivalent to a real    */
+/*  model that obediently complies with whatever user content asks for.    */
+/* ─────────────────────────────────────────────────────────────────────── */
+
+app.post("/api/chat", (req, res) => {
+  const body = req.__body ?? "";
+  const m = body.match(/ISITSAFEBRO_[A-Z0-9_]+_OK/);
+  res.writeHead(200, { "Content-Type": "application/json" });
+  if (m) {
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: m[0],
+            },
+          },
+        ],
+      }),
+    );
+    return;
+  }
+  res.end(
+    JSON.stringify({
+      choices: [
+        { message: { role: "assistant", content: "Hello! How can I help you today?" } },
+      ],
+    }),
+  );
+});
+
+/* ─────────────────────────────────────────────────────────────────────── */
 /*  Dispatcher with VULN-7 CORS leak baked in as a "middleware"            */
 /*  Echoes Origin + sets allow-credentials:true on every response, and     */
 /*  responds to all OPTIONS preflights with the same.                      */
