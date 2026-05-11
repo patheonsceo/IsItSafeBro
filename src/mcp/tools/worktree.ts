@@ -19,8 +19,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { resolve as resolvePath, dirname, basename, join } from "node:path";
-import { existsSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { execa } from "execa";
+
+/** Whatever execa() returns — a child-process-shaped Promise. */
+type Subprocess = ReturnType<typeof execa>;
+import getPort from "get-port";
+import net from "node:net";
 
 // ---------------------------------------------------------------------------
 // Shared content helper (matches the style of snap.ts).
@@ -133,6 +138,176 @@ async function createScanWorktree(input: CreateWorktreeInput): Promise<CreateWor
 }
 
 // ---------------------------------------------------------------------------
+// install_and_start
+// ---------------------------------------------------------------------------
+
+/**
+ * Order to try when the user (or /isitsafe) doesn't override the script.
+ * Most vibe-coded apps use `dev`; fall through covers older / lighter setups.
+ */
+const DEFAULT_SCRIPT_ORDER = ["dev", "start", "serve"] as const;
+
+interface RunningServer {
+  child: Subprocess;
+  port: number;
+  script: string;
+  startedAt: number;
+}
+
+/** Worktree path → live child process. cleanup_worktree reads from this. */
+const runningServers = new Map<string, RunningServer>();
+
+interface InstallAndStartInput {
+  worktreePath: string;
+  preferredPort?: number;
+  devCommand?: string;
+  readyTimeoutMs?: number;
+}
+
+export interface InstallAndStartResult {
+  ok: boolean;
+  url?: string;
+  port?: number;
+  pid?: number;
+  script?: string;
+  worktreePath?: string;
+  error?: string;
+}
+
+/** TCP connect probe — true iff something is listening on the port. */
+function isPortListening(port: number, host = "127.0.0.1", timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host });
+    const done = (result: boolean) => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+    socket.setTimeout(timeoutMs, () => done(false));
+  });
+}
+
+/** Pick a dev script out of package.json. */
+function detectDevScript(worktreePath: string, override?: string): { script: string } | { error: string } {
+  const pkgPath = join(worktreePath, "package.json");
+  if (!existsSync(pkgPath)) {
+    return { error: `no package.json found at ${pkgPath}` };
+  }
+  let pkg: { scripts?: Record<string, string> };
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  } catch (err) {
+    return { error: `package.json is not valid JSON: ${(err as Error).message}` };
+  }
+  const scripts = pkg.scripts ?? {};
+  if (override) {
+    if (!scripts[override]) {
+      return { error: `requested devCommand '${override}' is not a script in package.json` };
+    }
+    return { script: override };
+  }
+  for (const candidate of DEFAULT_SCRIPT_ORDER) {
+    if (scripts[candidate]) return { script: candidate };
+  }
+  return {
+    error: `package.json has no dev/start/serve script; pass devCommand explicitly. available: ${Object.keys(scripts).join(", ") || "(none)"}`,
+  };
+}
+
+async function installAndStart(input: InstallAndStartInput): Promise<InstallAndStartResult> {
+  const worktreePath = resolvePath(input.worktreePath);
+  if (!existsSync(worktreePath)) {
+    return { ok: false, error: `worktreePath does not exist: ${worktreePath}` };
+  }
+  if (runningServers.has(worktreePath)) {
+    return { ok: false, error: `a dev server is already running for ${worktreePath}; call cleanup_worktree first` };
+  }
+
+  const detection = detectDevScript(worktreePath, input.devCommand);
+  if ("error" in detection) {
+    return { ok: false, error: detection.error };
+  }
+  const { script } = detection;
+
+  let port: number;
+  try {
+    port = await getPort({
+      port: input.preferredPort !== undefined ? [input.preferredPort] : undefined,
+    });
+  } catch (err) {
+    return { ok: false, error: `port allocation failed: ${(err as Error).message}` };
+  }
+
+  // Inherit the user's env so framework flags / .env vars still resolve, but
+  // override PORT/HOST so the spawned server binds where we expect it.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PORT: String(port),
+    HOST: "127.0.0.1",
+    HOSTNAME: "127.0.0.1",
+    NODE_ENV: process.env.NODE_ENV ?? "development",
+  };
+
+  const child = execa("npm", ["run", script], {
+    cwd: worktreePath,
+    env,
+    stdio: "pipe",
+    reject: false,
+  });
+
+  // If the child dies before we see the port, surface it.
+  let childExited = false;
+  let exitInfo: string | null = null;
+  child.then(
+    (result) => {
+      childExited = true;
+      exitInfo = `exited (code ${result.exitCode ?? "?"})`;
+      runningServers.delete(worktreePath);
+    },
+    (err) => {
+      childExited = true;
+      exitInfo = `errored: ${(err as Error).message}`;
+      runningServers.delete(worktreePath);
+    },
+  );
+
+  const readyTimeout = input.readyTimeoutMs ?? 60_000;
+  const deadline = Date.now() + readyTimeout;
+  while (Date.now() < deadline) {
+    if (childExited) {
+      return {
+        ok: false,
+        error: `dev server '${script}' ${exitInfo ?? "exited"} before the port responded`,
+      };
+    }
+    if (await isPortListening(port)) {
+      runningServers.set(worktreePath, { child, port, script, startedAt: Date.now() });
+      return {
+        ok: true,
+        url: `http://127.0.0.1:${port}`,
+        port,
+        pid: child.pid,
+        script,
+        worktreePath,
+      };
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  // Timed out; kill the child if it's still alive.
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // ignore
+  }
+  return {
+    ok: false,
+    error: `dev server '${script}' did not respond on port ${port} within ${readyTimeout}ms`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // MCP wiring
 // ---------------------------------------------------------------------------
 
@@ -158,6 +333,41 @@ export function registerWorktreeTools(server: McpServer): void {
       const result = await createScanWorktree({
         cwd: args.cwd,
         branchPrefix: args.branchPrefix,
+      });
+      return asContent(result);
+    },
+  );
+
+  server.registerTool(
+    "install_and_start",
+    {
+      title: "Start the dev server in a scan worktree",
+      description:
+        "Detect the dev script in the worktree's package.json (defaults: dev > start > serve), allocate a free localhost port via get-port, spawn the script with PORT/HOST env vars overridden, and poll the port until it responds. 60s timeout by default. Tracks the spawned process so cleanup_worktree can stop it. Refuses if no suitable script is found or if a server is already running for this worktree.",
+      inputSchema: z.object({
+        worktreePath: z.string(),
+        preferredPort: z
+          .number()
+          .int()
+          .optional()
+          .describe("Try this port first; falls back to any free port if it's taken."),
+        devCommand: z
+          .string()
+          .optional()
+          .describe("Override script name from package.json (e.g., 'dev:secure'). Defaults to scanning dev → start → serve."),
+        readyTimeoutMs: z
+          .number()
+          .int()
+          .optional()
+          .describe("Max wait for the port to respond. Defaults to 60000."),
+      }),
+    },
+    async (args) => {
+      const result = await installAndStart({
+        worktreePath: args.worktreePath,
+        preferredPort: args.preferredPort,
+        devCommand: args.devCommand,
+        readyTimeoutMs: args.readyTimeoutMs,
       });
       return asContent(result);
     },

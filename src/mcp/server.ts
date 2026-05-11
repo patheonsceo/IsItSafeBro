@@ -61,20 +61,6 @@ registerSnapTools(server);
 registerWorktreeTools(server);
 
 server.registerTool(
-  "install_and_start",
-  {
-    title: "Install (if needed) and start the dev server in a worktree",
-    description:
-      "Detect the dev server command (next/vite/express/etc.), allocate a free port via get-port, start the server, and wait for the port to respond. 60s timeout; surfaces a clear error if the app fails to start.",
-    inputSchema: z.object({
-      worktreePath: z.string(),
-      preferredPort: z.number().int().optional(),
-    }),
-  },
-  async () => stub("install_and_start"),
-);
-
-server.registerTool(
   "restart_dev_server",
   {
     title: "Restart the dev server in the scan worktree",
