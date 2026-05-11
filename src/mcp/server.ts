@@ -24,6 +24,7 @@ import { registerWorktreeTools } from "./tools/worktree.js";
 import { registerPayloadTools } from "./tools/payloads.js";
 import { registerProbeTools } from "./tools/probe.js";
 import { registerEndpointTools } from "./tools/endpoints.js";
+import { registerFixTools } from "./tools/fix.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -93,24 +94,11 @@ registerEndpointTools(server);
 registerProbeTools(server);
 
 // ---------------------------------------------------------------------------
-// Fixing
+// Fix loop — implemented in ./tools/fix.ts. apply_fix is real; verify_clean,
+// freeze_test, and merge_fix_branch are still stubs pending the next commits.
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "apply_fix",
-  {
-    title: "Apply a patch to the scan worktree and commit it",
-    description:
-      "Write the supplied patch into the scan worktree, run any required formatter, and commit it on the scan branch with a descriptive conventional-commit message. One fix = one commit.",
-    inputSchema: z.object({
-      worktreePath: z.string(),
-      file: z.string(),
-      patch: z.string().describe("Unified diff or full file replacement."),
-      commitMessage: z.string(),
-    }),
-  },
-  async () => stub("apply_fix"),
-);
+registerFixTools(server);
 
 // ---------------------------------------------------------------------------
 // Verification & regression
