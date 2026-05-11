@@ -57,25 +57,12 @@ function stub(tool: string) {
 registerSnapTools(server);
 
 // ---------------------------------------------------------------------------
-// Worktree lifecycle — implemented in ./tools/worktree.ts. create_scan_worktree
-// is real; install_and_start and cleanup_worktree are still stubs pending the
-// next commits.
+// Worktree lifecycle — implemented in ./tools/worktree.ts. All four tools
+// (create_scan_worktree, install_and_start, cleanup_worktree, restart_dev_server)
+// are real.
 // ---------------------------------------------------------------------------
 
 registerWorktreeTools(server);
-
-server.registerTool(
-  "restart_dev_server",
-  {
-    title: "Restart the dev server in the scan worktree",
-    description:
-      "Kill the currently-running dev server for the scan worktree, restart it, and wait for the port to respond again. Used between the fix pass and the verification re-attack.",
-    inputSchema: z.object({
-      worktreePath: z.string(),
-    }),
-  },
-  async () => stub("restart_dev_server"),
-);
 
 // ---------------------------------------------------------------------------
 // Reconnaissance — load_payloads is real (./tools/payloads.ts), list_endpoints

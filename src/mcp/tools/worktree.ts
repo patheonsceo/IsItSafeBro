@@ -311,6 +311,46 @@ async function installAndStart(input: InstallAndStartInput): Promise<InstallAndS
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/*  restart_dev_server                                                        */
+/* -------------------------------------------------------------------------- */
+
+interface RestartDevServerInput {
+  worktreePath: string;
+  /** Override the script picked at install time. Defaults to the one we used. */
+  devCommand?: string;
+  readyTimeoutMs?: number;
+}
+
+async function restartDevServer(input: RestartDevServerInput): Promise<InstallAndStartResult> {
+  const worktreePath = resolvePath(input.worktreePath);
+  const running = runningServers.get(worktreePath);
+  if (!running) {
+    return {
+      ok: false,
+      error: `no running dev server tracked for ${worktreePath}. use install_and_start to start one first.`,
+    };
+  }
+
+  const previousPort = running.port;
+  const previousScript = running.script;
+
+  if (typeof running.child.pid === "number") {
+    await killProcessGroup(running.child.pid);
+  }
+  runningServers.delete(worktreePath);
+
+  // re-launch with the same script and preferring the same port so the URL
+  // stays stable across the restart. get-port falls back to a fresh port if
+  // the kernel hasn't released the old one yet.
+  return installAndStart({
+    worktreePath,
+    devCommand: input.devCommand ?? previousScript,
+    preferredPort: previousPort,
+    readyTimeoutMs: input.readyTimeoutMs,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // cleanup_worktree
 // ---------------------------------------------------------------------------
@@ -537,6 +577,35 @@ export function registerWorktreeTools(server: McpServer): void {
       const result = await installAndStart({
         worktreePath: args.worktreePath,
         preferredPort: args.preferredPort,
+        devCommand: args.devCommand,
+        readyTimeoutMs: args.readyTimeoutMs,
+      });
+      return asContent(result);
+    },
+  );
+
+  server.registerTool(
+    "restart_dev_server",
+    {
+      title: "Kill and re-launch the dev server in a scan worktree",
+      description:
+        "Stops the dev server previously started via install_and_start for this worktree and starts it again. Used between apply_fix and verify_clean so the running server picks up the patched code. Re-uses the original script and prefers the previous port (so the URL stays stable across restart); falls back to a fresh free port if the kernel hasn't released the old one. Refuses if no server is currently tracked for the worktree.",
+      inputSchema: z.object({
+        worktreePath: z.string(),
+        devCommand: z
+          .string()
+          .optional()
+          .describe("Override the previously-used script."),
+        readyTimeoutMs: z
+          .number()
+          .int()
+          .optional()
+          .describe("Max wait for the port to respond. Defaults to 60000."),
+      }),
+    },
+    async (args) => {
+      const result = await restartDevServer({
+        worktreePath: args.worktreePath,
         devCommand: args.devCommand,
         readyTimeoutMs: args.readyTimeoutMs,
       });
