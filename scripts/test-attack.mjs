@@ -192,11 +192,13 @@ async function main() {
     await client.initialize();
     log("mcp initialized");
 
-    /* 1. Load payloads */
-    const pay = await client.callTool("load_payloads", { category: "auth" });
+    /* 1. Load payloads from EVERY category */
+    const pay = await client.callTool("load_payloads", { category: "all" });
     if (!pay.ok) die("load_payloads failed: " + JSON.stringify(pay));
-    const payloads = pay.loaded[0].payloads;
-    log(`loaded ${payloads.length} auth payloads`);
+    const allPayloads = pay.loaded.flatMap((c) => c.payloads);
+    const byCategory = {};
+    for (const c of pay.loaded) byCategory[c.category] = c.payloads.length;
+    log(`loaded ${allPayloads.length} payloads across categories:`, byCategory);
 
     /* 2. List endpoints */
     const eps = await client.callTool("list_endpoints", {
@@ -207,18 +209,27 @@ async function main() {
     log(
       `discovered ${eps.total} endpoints (sources: ${JSON.stringify(eps.bySource)})`,
     );
-    // Sanity: should find /admin, /api/users, /api/me, etc.
     const paths = new Set(eps.endpoints.map((e) => e.path));
-    const expectedRoutes = ["/admin", "/api/me", "/api/users", "/debug", "/login"];
+    const expectedRoutes = [
+      "/admin",
+      "/api/me",
+      "/api/users",
+      "/debug",
+      "/login",
+      "/api/products",
+      "/api/config",
+      "/api/customers/1",
+      "/api/chat",
+    ];
     for (const p of expectedRoutes) {
       if (!paths.has(p)) die(`list_endpoints missed expected route ${p}`);
     }
     log("endpoint discovery sanity: ok");
 
-    /* 3. Attack loop */
+    /* 3. Attack loop across all categories */
     const findings = [];
     const skipped = [];
-    for (const p of payloads) {
+    for (const p of allPayloads) {
       if (p.is_destructive) {
         skipped.push(p.id);
         continue;
@@ -227,68 +238,130 @@ async function main() {
       if (f) {
         findings.push(f);
         log(
-          `  ✓ [${f.severity}] ${f.payload_id} → ${f.method} ${f.endpoint} (status ${f.response_status})`,
+          `  ✓ [${f.severity}] ${f.category}/${f.payload_id} → ${f.method} ${f.endpoint} (status ${f.response_status})`,
         );
-      } else {
-        log(`  ✗ NO FINDING: ${p.id}`);
       }
     }
     log(`skipped destructive: ${skipped.join(", ")}`);
-    log(`total findings: ${findings.length} (expected 9)`);
 
-    /* 4. Assertions: every expected payload fired */
-    const expected = new Set([
-      "unauthenticated-admin-route",
-      "unauthenticated-write-endpoint",
-      "jwt-alg-none-bypass",
-      "weak-jwt-secret-guessable",
-      "weak-default-credentials",
-      "login-empty-credentials-accepted",
-      "cors-misconfig-credentials-with-wildcard-or-reflected-origin",
-      "unprotected-debug-or-internal-route",
-      "session-cookie-without-httponly",
-    ]);
-    const foundIds = new Set(findings.map((f) => f.payload_id));
-    const missing = [...expected].filter((id) => !foundIds.has(id));
-    if (missing.length > 0) {
-      die("missed expected findings: " + missing.join(", "));
+    /* 4. Per-category expectations */
+    const expectedFindings = {
+      auth: new Set([
+        "unauthenticated-admin-route",
+        "unauthenticated-write-endpoint",
+        "jwt-alg-none-bypass",
+        "weak-jwt-secret-guessable",
+        "weak-default-credentials",
+        "login-empty-credentials-accepted",
+        "cors-misconfig-credentials-with-wildcard-or-reflected-origin",
+        "unprotected-debug-or-internal-route",
+        "session-cookie-without-httponly",
+      ]),
+      api: new Set([
+        "sql-injection-error-based",
+        "xss-reflected",
+        "path-traversal-via-filename-param",
+      ]),
+      secrets: new Set([
+        "dotenv-file-served",
+        "config-route-leaks-secrets",
+      ]),
+      idor: new Set([
+        "per-user-resource-fetched-without-auth",
+        "unauthed-list-endpoint-returns-records",
+        "pii-in-list-response",
+      ]),
+      prompt: new Set([
+        "prompt-injection-direct-canary",
+        "prompt-injection-json-output-takeover",
+        "prompt-injection-fake-system-message",
+        "prompt-injection-data-channel-canary",
+        "prompt-injection-jailbreak-via-roleplay",
+        "prompt-injection-fake-assistant-turn",
+        "prompt-injection-developer-mode-bypass",
+      ]),
+    };
+
+    const totalExpected = Object.values(expectedFindings).reduce((n, s) => n + s.size, 0);
+    log(`total findings: ${findings.length} (expected ${totalExpected})`);
+
+    const errors = [];
+    for (const [cat, expectedIds] of Object.entries(expectedFindings)) {
+      const catFindings = findings.filter((f) => f.category === cat);
+      const catFoundIds = new Set(catFindings.map((f) => f.payload_id));
+      const missing = [...expectedIds].filter((id) => !catFoundIds.has(id));
+      const surprises = [...catFoundIds].filter((id) => !expectedIds.has(id));
+      if (missing.length > 0) errors.push(`[${cat}] missed: ${missing.join(", ")}`);
+      if (surprises.length > 0) errors.push(`[${cat}] unexpected: ${surprises.join(", ")}`);
+      log(`  ${cat}: ${catFindings.length}/${expectedIds.size} expected, surprises=${surprises.length}`);
     }
-    const surprises = [...foundIds].filter((id) => !expected.has(id));
-    if (surprises.length > 0) {
-      die("unexpected findings (review): " + surprises.join(", "));
+    if (errors.length > 0) {
+      die("per-category assertions failed:\n  " + errors.join("\n  "));
     }
-    log("every expected bug was found, no surprises");
+    log("every expected bug was found, no surprises across all 5 categories");
 
     /* 5. Anti-false-positive: healthy counterparts must NOT trigger */
-    const unauthAdmin = payloads.find((p) => p.id === "unauthenticated-admin-route");
-    const fpAdmin = await client.callTool("probe_endpoint", {
-      url,
-      path: "/safe-admin",
-      method: "GET",
-      evaluateSignal: unauthAdmin.success_signal,
-    });
-    if (fpAdmin.signal?.matched) {
-      die("FALSE POSITIVE: unauthenticated-admin-route matched /safe-admin");
-    }
-    log("  ✓ no FP: /safe-admin does not match unauth-admin signal");
+    const findPayload = (id) => allPayloads.find((p) => p.id === id);
 
-    const unauthWrite = payloads.find((p) => p.id === "unauthenticated-write-endpoint");
-    const fpWrite = await client.callTool("probe_endpoint", {
-      url,
-      path: "/api/safe-users",
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-      evaluateSignal: unauthWrite.success_signal,
-    });
-    if (fpWrite.signal?.matched) {
-      die("FALSE POSITIVE: unauthenticated-write-endpoint matched /api/safe-users");
+    const fpChecks = [
+      {
+        label: "/safe-admin does not match unauth-admin signal",
+        payload: findPayload("unauthenticated-admin-route"),
+        probe: { path: "/safe-admin", method: "GET" },
+      },
+      {
+        label: "/api/safe-users does not match unauth-write signal",
+        payload: findPayload("unauthenticated-write-endpoint"),
+        probe: {
+          path: "/api/safe-users",
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        },
+      },
+      {
+        label: "/api/users (no PII-secret fields) does not match excessive-data-exposure",
+        payload: findPayload("excessive-data-exposure-on-user-endpoint"),
+        probe: { path: "/api/users", method: "GET" },
+      },
+      {
+        label: "/api/chat with benign 'hi' input does not match prompt-injection-direct-canary",
+        payload: findPayload("prompt-injection-direct-canary"),
+        probe: {
+          path: "/api/chat",
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
+        },
+      },
+    ];
+    for (const fp of fpChecks) {
+      if (!fp.payload) die(`anti-FP check missing payload definition: ${fp.label}`);
+      const r = await client.callTool("probe_endpoint", {
+        url,
+        ...fp.probe,
+        evaluateSignal: fp.payload.success_signal,
+      });
+      if (r.signal?.matched) {
+        die(`FALSE POSITIVE: ${fp.label} — but signal matched.`);
+      }
+      log(`  ✓ no FP: ${fp.label}`);
     }
-    log("  ✓ no FP: /api/safe-users does not match unauth-write signal");
 
-    log("ALL CHECKS PASSED — 9 verified findings, 0 false positives");
+    log(`ALL CHECKS PASSED — ${findings.length} verified findings, 0 false positives, across 5 categories`);
     process.stdout.write("\nFINDINGS DETAIL:\n");
-    for (const f of findings) {
+    const sorted = [...findings].sort((a, b) => {
+      const cats = ["auth", "api", "secrets", "idor", "prompt"];
+      const ci = cats.indexOf(a.category) - cats.indexOf(b.category);
+      if (ci !== 0) return ci;
+      return a.payload_id.localeCompare(b.payload_id);
+    });
+    let lastCat = null;
+    for (const f of sorted) {
+      if (f.category !== lastCat) {
+        process.stdout.write(`\n=== ${f.category.toUpperCase()} ===\n`);
+        lastCat = f.category;
+      }
       process.stdout.write(`\n[${f.severity}] ${f.payload_id}\n`);
       process.stdout.write(`  endpoint: ${f.method} ${f.endpoint}\n`);
       process.stdout.write(`  evidence:\n`);
