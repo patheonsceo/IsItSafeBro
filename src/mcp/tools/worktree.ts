@@ -249,11 +249,15 @@ async function installAndStart(input: InstallAndStartInput): Promise<InstallAndS
     NODE_ENV: process.env.NODE_ENV ?? "development",
   };
 
+  // detached:true puts the child in its own process group so cleanup_worktree
+  // can kill the whole tree (npm + its node grandchild) with one group-kill,
+  // not just the npm wrapper.
   const child = execa("npm", ["run", script], {
     cwd: worktreePath,
     env,
     stdio: "pipe",
     reject: false,
+    detached: true,
   });
 
   // If the child dies before we see the port, surface it.
@@ -304,6 +308,173 @@ async function installAndStart(input: InstallAndStartInput): Promise<InstallAndS
   return {
     ok: false,
     error: `dev server '${script}' did not respond on port ${port} within ${readyTimeout}ms`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// cleanup_worktree
+// ---------------------------------------------------------------------------
+
+interface CleanupWorktreeInput {
+  worktreePath: string;
+  /** If true, also delete the scan branch. Spec default is false (keep it). */
+  deleteBranch?: boolean;
+}
+
+export interface CleanupWorktreeResult {
+  ok: boolean;
+  worktreePath?: string;
+  killed?: "process_group" | "none" | "force";
+  removed?: boolean;
+  branchKept?: string;
+  branchDeleted?: string;
+  error?: string;
+}
+
+/** SIGTERM the whole process group, then SIGKILL after `graceMs` if still alive. */
+async function killProcessGroup(pid: number, graceMs = 3000): Promise<"process_group" | "force"> {
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    // Group doesn't exist (already exited) or wasn't created — try the
+    // direct child as a fallback.
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      return "process_group";
+    }
+  }
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(-pid, 0);
+    } catch {
+      // group gone
+      return "process_group";
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already dead
+    }
+  }
+  return "force";
+}
+
+async function cleanupWorktree(input: CleanupWorktreeInput): Promise<CleanupWorktreeResult> {
+  const worktreePath = resolvePath(input.worktreePath);
+  if (!existsSync(worktreePath)) {
+    return { ok: false, worktreePath, error: `worktreePath does not exist: ${worktreePath}` };
+  }
+
+  // 1. Stop the dev server if we're tracking one.
+  let killed: NonNullable<CleanupWorktreeResult["killed"]> = "none";
+  const running = runningServers.get(worktreePath);
+  if (running) {
+    const { child } = running;
+    if (typeof child.pid === "number") {
+      killed = await killProcessGroup(child.pid);
+    }
+    runningServers.delete(worktreePath);
+  }
+
+  // 2. Discover the source repo (common git dir) so we can issue the worktree
+  // remove from there. Running it from inside the worktree itself works on
+  // modern git, but the common-dir route is more portable.
+  let sourceRepo: string | null = null;
+  try {
+    const wtGit = simpleGit({ baseDir: worktreePath });
+    const commonDir = (await wtGit.raw(["rev-parse", "--git-common-dir"])).trim();
+    // common-dir is typically <source>/.git; strip the trailing /.git.
+    const absCommon = resolvePath(worktreePath, commonDir);
+    sourceRepo = absCommon.endsWith(`${join(".git")}`)
+      ? dirname(absCommon)
+      : absCommon;
+  } catch {
+    sourceRepo = null;
+  }
+
+  // 3. Find the branch that this worktree is on, so we can keep it
+  // by name and (optionally) delete it.
+  let branchOnWorktree: string | null = null;
+  try {
+    const wtGit = simpleGit({ baseDir: worktreePath });
+    branchOnWorktree = (await wtGit.raw(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+    if (branchOnWorktree === "HEAD") branchOnWorktree = null; // detached
+  } catch {
+    branchOnWorktree = null;
+  }
+
+  // 4. Remove the worktree. If sourceRepo lookup failed, try from inside.
+  let removed = false;
+  const tryRemove = async (baseDir: string): Promise<string | null> => {
+    try {
+      await simpleGit({ baseDir }).raw(["worktree", "remove", "--force", worktreePath]);
+      return null;
+    } catch (err) {
+      return (err as Error).message;
+    }
+  };
+  let removeError: string | null = null;
+  if (sourceRepo) {
+    removeError = await tryRemove(sourceRepo);
+  }
+  if (removeError !== null && !sourceRepo) {
+    removeError = await tryRemove(dirname(worktreePath));
+  }
+  if (existsSync(worktreePath)) {
+    // worktree remove didn't actually delete the dir; do it manually.
+    try {
+      const { rmSync } = await import("node:fs");
+      rmSync(worktreePath, { recursive: true, force: true });
+    } catch (err) {
+      return {
+        ok: false,
+        worktreePath,
+        killed,
+        removed: false,
+        error: `worktree remove failed: ${removeError ?? "(no git error)"}; manual rm also failed: ${(err as Error).message}`,
+      };
+    }
+  }
+  removed = true;
+  // Prune the git registry so 'git worktree list' is clean.
+  if (sourceRepo) {
+    try {
+      await simpleGit({ baseDir: sourceRepo }).raw(["worktree", "prune"]);
+    } catch {
+      // best effort
+    }
+  }
+
+  // 5. Optionally delete the branch.
+  let branchDeleted: string | undefined;
+  let branchKept: string | undefined;
+  if (branchOnWorktree) {
+    if (input.deleteBranch && sourceRepo) {
+      try {
+        await simpleGit({ baseDir: sourceRepo }).raw(["branch", "-D", branchOnWorktree]);
+        branchDeleted = branchOnWorktree;
+      } catch {
+        branchKept = branchOnWorktree;
+      }
+    } else {
+      branchKept = branchOnWorktree;
+    }
+  }
+
+  return {
+    ok: true,
+    worktreePath,
+    killed,
+    removed,
+    ...(branchKept ? { branchKept } : {}),
+    ...(branchDeleted ? { branchDeleted } : {}),
   };
 }
 
@@ -368,6 +539,29 @@ export function registerWorktreeTools(server: McpServer): void {
         preferredPort: args.preferredPort,
         devCommand: args.devCommand,
         readyTimeoutMs: args.readyTimeoutMs,
+      });
+      return asContent(result);
+    },
+  );
+
+  server.registerTool(
+    "cleanup_worktree",
+    {
+      title: "Tear down a scan worktree",
+      description:
+        "Kill the dev server running for this worktree (graceful SIGTERM to the process group, SIGKILL after 3s if still alive), then `git worktree remove --force` the directory. The scan branch is kept by default so the user can review or cherry-pick; pass deleteBranch=true to drop it too. Idempotent: returns ok:true even if no server was tracked, as long as the worktree directory ends up removed.",
+      inputSchema: z.object({
+        worktreePath: z.string(),
+        deleteBranch: z
+          .boolean()
+          .optional()
+          .describe("Also delete the scan branch. Default false (spec default keeps the branch)."),
+      }),
+    },
+    async (args) => {
+      const result = await cleanupWorktree({
+        worktreePath: args.worktreePath,
+        deleteBranch: args.deleteBranch,
       });
       return asContent(result);
     },

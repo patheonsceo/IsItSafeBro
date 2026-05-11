@@ -73,19 +73,6 @@ server.registerTool(
   async () => stub("restart_dev_server"),
 );
 
-server.registerTool(
-  "cleanup_worktree",
-  {
-    title: "Tear down the scan worktree directory",
-    description:
-      "Remove the worktree directory and prune git's worktree registry. The fix branch is left intact so the user can review or cherry-pick.",
-    inputSchema: z.object({
-      worktreePath: z.string(),
-    }),
-  },
-  async () => stub("cleanup_worktree"),
-);
-
 // ---------------------------------------------------------------------------
 // Reconnaissance
 // ---------------------------------------------------------------------------
