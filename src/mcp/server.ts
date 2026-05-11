@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { registerSnapTools } from "./tools/snap.js";
 import { registerWorktreeTools } from "./tools/worktree.js";
+import { registerPayloadTools } from "./tools/payloads.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -74,8 +75,11 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// Reconnaissance
+// Reconnaissance — load_payloads is real (./tools/payloads.ts), list_endpoints
+// is still a stub pending day 6.
 // ---------------------------------------------------------------------------
+
+registerPayloadTools(server);
 
 server.registerTool(
   "list_endpoints",
@@ -92,19 +96,6 @@ server.registerTool(
     }),
   },
   async () => stub("list_endpoints"),
-);
-
-server.registerTool(
-  "load_payloads",
-  {
-    title: "Load attack payloads by category",
-    description:
-      "Read payload JSON files under `payloads/` by category (auth | api | prompt | secrets | idor). Returns the parsed payload list ready for use by the attacker subagent.",
-    inputSchema: z.object({
-      category: z.enum(["auth", "api", "prompt", "secrets", "idor", "all"]),
-    }),
-  },
-  async () => stub("load_payloads"),
 );
 
 // ---------------------------------------------------------------------------
