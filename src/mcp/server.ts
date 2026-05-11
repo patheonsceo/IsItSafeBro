@@ -23,6 +23,7 @@ import { registerSnapTools } from "./tools/snap.js";
 import { registerWorktreeTools } from "./tools/worktree.js";
 import { registerPayloadTools } from "./tools/payloads.js";
 import { registerProbeTools } from "./tools/probe.js";
+import { registerEndpointTools } from "./tools/endpoints.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -82,22 +83,7 @@ server.registerTool(
 
 registerPayloadTools(server);
 
-server.registerTool(
-  "list_endpoints",
-  {
-    title: "Enumerate HTTP endpoints on the target app",
-    description:
-      "Crawl the running app to find routes. Parses framework routing (Next.js app/pages router, Express, etc.) where possible; falls back to live HTTP crawling. Returns an array of {method, path} entries.",
-    inputSchema: z.object({
-      url: z.string().describe("Base URL of the running dev server."),
-      worktreePath: z
-        .string()
-        .optional()
-        .describe("If provided, parse framework routing from the codebase as well."),
-    }),
-  },
-  async () => stub("list_endpoints"),
-);
+registerEndpointTools(server);
 
 // ---------------------------------------------------------------------------
 // Probing — implemented in ./tools/probe.ts. Includes the structured signal
