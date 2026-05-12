@@ -57,6 +57,7 @@
     "test:e2e:attack": "npm run build && node scripts/test-attack.mjs",
     "test:e2e:fix": "npm run build && node scripts/test-fix-loop.mjs",
     "demo": "npm run build && node scripts/demo.mjs",
+    "demo:nextjs": "npm run build && node scripts/demo-nextjs.mjs",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
