@@ -28,6 +28,10 @@ npm run test:e2e:payloads
 npm run test:e2e:attack
 npm run test:e2e:fix
 
+# runnable demos (for recording / sharing)
+npm run demo            # ~45s, generic fixture
+npm run demo:nextjs     # ~2min, real Next.js 15 fixture (VibeNotes)
+
 # manual CLI
 node dist/bin/isitsafebro.js --help
 node dist/bin/isitsafebro.js status
@@ -81,6 +85,12 @@ If unsure: lowercase, no em dashes, no "leverage" / "robust" / "comprehensive" /
 4. Add a fixture route to `test-fixtures/vuln-app/server.js` exposing the bug, plus a healthy counterpart that should NOT match.
 5. Update `scripts/test-attack.mjs` to include the new payload id in the expected-findings set for that category.
 6. Run `npm run test:e2e:attack` and confirm: bug fixture fires; healthy counterpart doesn't.
+7. **Sanity-check the Next.js fixture too.** Pattern broadness matters: a string like `unauthorized` matches Next.js's RSC payload metadata (`"unauthorized":"$undefined"`) on every Server Component response, so signals that exclude on `unauthorized` will never fire on any Next.js app. Prefer multi-word phrases that only appear in human-readable copy. Verify by running `npm run demo:nextjs` and checking the payload fires.
+
+### The two test fixtures
+
+- `test-fixtures/vuln-app/` — zero-dep node http server. Fast (no `npm install` needed). Used by `test-attack.mjs` and `test-fix-loop.mjs`. Every payload exercises here.
+- `test-fixtures/nextjs-vuln-app/` — **VibeNotes**, a real Next.js 15 + React 19 + TypeScript app. Slower (first run installs ~200 npm deps). Used by `demo-nextjs.mjs`. The "this is a real vibe-coded app" demo target. Bugs are framed through actual Next.js idioms (Server Components, middleware, route handlers, NEXT_PUBLIC env vars).
 
 ### A new MCP tool
 

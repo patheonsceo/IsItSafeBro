@@ -142,7 +142,16 @@ npm uninstall -g isitsafebro
 
 ## demo
 
-there's no recorded asciinema yet. the e2e attack test is the closest thing — run `npm run test:e2e:attack` (after cloning and `npm install`) and you'll see the engine spin up the vulnerable fixture, discover its routes, probe with every applicable payload, and emit verified findings with multi-line evidence traces.
+two self-contained runnable demos. both drive the same MCP server claude code uses for `/isitsafe`, against a deliberately-vulnerable fixture shipped with the repo, all auto.
+
+```bash
+npm run demo            # ~45s   generic fixture (zero-dep node http server)
+npm run demo:nextjs     # ~2min  real Next.js 15 app (auto-installs deps on first run)
+```
+
+the next.js demo (**VibeNotes**) is the more compelling one — it's a real Next.js 15 + React 19 + TypeScript project with the kinds of bugs vibe-coded apps actually ship: a server component admin page with no auth check, a middleware that mis-configures CORS and forgets HttpOnly, a route handler that accepts weak passwords, a search page using react's "dangerously set" HTML API, a client component baking `NEXT_PUBLIC_STRIPE_SECRET` into the bundle. it finds 23 bugs and the demo's coding-agent stand-in patches 5 of them in commits that look like a real engineer wrote them.
+
+trimmed output from a real `npm run demo` run:
 
 trimmed output from a real run:
 

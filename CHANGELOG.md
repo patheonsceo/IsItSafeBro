@@ -8,6 +8,13 @@ isitsafebro is pre-1.0. **Nothing has been published to npm yet.** Entries below
 
 ## Unreleased
 
+### Post-Day-11 — demos + Next.js fixture
+
+- **Added:** `scripts/demo.mjs` — runnable end-to-end showcase. Drives the same MCP server `/isitsafe` uses, against the generic `vuln-app` fixture, all auto. ~45-second wall-clock. Exposed as `npm run demo`. Designed for asciinema / screen capture.
+- **Added:** `test-fixtures/nextjs-vuln-app/` — **VibeNotes**, a real Next.js 15 + React 19 + TypeScript app engineered with the same bug classes the generic vuln-app has, but through real Next.js idioms (app router method exports, `middleware.ts`, server components, NEXT_PUBLIC env vars, server actions). 14 source files, 12 planted bugs across 4 categories. Catches what vibe-coded Next.js apps actually ship.
+- **Added:** `scripts/demo-nextjs.mjs` — Next.js variant of the demo. Auto-installs the fixture's deps on first run (cached after). ~2-minute wall-clock. Five hand-crafted Next.js-idiomatic fixes (Server-Component auth guard, middleware HttpOnly, route handler weak-creds rejection, page swapping unsafe HTML for auto-escaped JSX, client component dropping the NEXT_PUBLIC reference). Exposed as `npm run demo:nextjs`. Verified result: 23 real bugs found, 6 fixes verified clean + frozen.
+- **Changed:** `payloads/auth.json` — tightened the `body_not_contains_any` patterns on three signals (unauth-admin-route, unauth-write-endpoint, unprotected-debug-route) to remove bare `"unauthorized"` and `"forbidden"`. Those words match Next.js App Router's RSC payload metadata (`"unauthorized":"$undefined"`, `"forbidden":"$undefined"`) which appears in every Server Component response, so the old patterns made these signals impossible to fire against any Next.js app. Replaced with multi-word phrases that only appear in human-readable auth-denial copy ("please log in", "you are not authorized", "access denied", etc.). Generic vuln-app e2e regression-checked: still 24/24.
+
 ### Day 9-10 — the fix loop, end-to-end
 
 - **Added:** `src/mcp/tools/fix.ts` with four MCP tools.
