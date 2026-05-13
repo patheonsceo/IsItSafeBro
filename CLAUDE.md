@@ -4,10 +4,12 @@ This file is loaded into the context of every Claude Code session that opens thi
 
 ## What this project is
 
-isitsafebro is a Claude Code plugin that red-teams a vibe-coded localhost app before the user ships it. Two slash commands:
+isitsafebro is a Claude Code plugin that red-teams a vibe-coded localhost app before the user ships it. Two slash commands (Claude Code namespaces them under the plugin name):
 
-- `/snap` — splits messy uncommitted work into clean conventional commits.
-- `/isitsafe` — runs a full security scan, applies fixes the user accepts on an isolated branch, verifies the fixes work, freezes regression tests, surfaces a merge prompt.
+- `/isitsafebro:snap` — splits messy uncommitted work into clean conventional commits.
+- `/isitsafebro:isitsafe` — runs a full security scan, applies fixes the user accepts on an isolated branch, verifies the fixes work, freezes regression tests, surfaces a merge prompt.
+
+**Verified live (2026-05-13):** `isitsafebro register` puts the full marketplace + cache + 3 config-file install in place; `/isitsafebro:isitsafe` against `/tmp/vibenotes-demo` (a copy of `test-fixtures/nextjs-vuln-app`) produced 18 verified findings in 5m 53s, paused at the "wanna fix all of them? [Y/n/pick]" prompt for user input. See the 2026-05-13 entry in CHANGELOG.md for the full result.
 
 Both run against a long-lived MCP server (`src/mcp/server.ts`) that exposes 13 tools. The signal architecture (structured predicates evaluated server-side) is the keystone of the false-positive prevention story — read [`docs/false-positives.md`](./docs/false-positives.md) if you're about to touch payloads or signals.
 

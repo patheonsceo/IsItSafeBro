@@ -72,9 +72,9 @@ most security tools were built for people who already know what they're looking 
 
 alpha but feature-complete. the product is whole; we haven't published it to npm yet.
 
-**works end-to-end:**
+**works end-to-end** (verified live in claude code v2.1.140 on 2026-05-13 — 18 real findings in 5m 53s against the next.js fixture):
 
-- the plugin installs and registers in claude code via `isitsafebro register`.
+- the plugin installs and registers in claude code via `isitsafebro register` (writes the full marketplace + cache + three config-file install, not just a symlink).
 - `/snap` runs over the real MCP server. 19 unit tests + 1 e2e against a messy fixture repo.
 - `/isitsafe` runs the full scan → fix → verify → freeze → merge loop. when the attacker finds something, the user picks which to fix, fixes land on the scan branch as conventional commits, the dev server restarts, every fix is re-verified with the same signal that detected it, verified fixes get serialized as regression tests under `.isitsafebro/tests/`, and the scan branch merges into main.
 - the attack engine: 42 attack patterns across 5 categories (auth, api, secrets, idor, prompt injection), each with a structured success signal that prevents false positives. proven end-to-end against a deliberately-vulnerable fixture: 24 verified findings, 0 false positives.

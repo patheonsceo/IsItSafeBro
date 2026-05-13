@@ -8,6 +8,18 @@ isitsafebro is pre-1.0. **Nothing has been published to npm yet.** Entries below
 
 ## Unreleased
 
+### 2026-05-13 — verified live in Claude Code
+
+- `isitsafebro register` rewritten to produce a working install: writes `~/.claude/plugins/marketplaces/local-isitsafebro/`, `cache/local-isitsafebro/isitsafebro/<ver>/`, and entries in `installed_plugins.json`, `known_marketplaces.json`, `settings.json`. The earlier "just symlink the package" approach didn't actually enable the plugin in current Claude Code (`v2.1.140`) because Claude Code looks for the plugin in the marketplace registry, not in the plugins dir directly.
+- `unregister` and `status` follow the same model. `status` emits a six-check health report. Idempotent; legacy-symlink migration handled.
+- **Verified end-to-end** in a real Claude Code session against a fresh copy of the VibeNotes fixture (`/tmp/vibenotes-demo`):
+  - `/isitsafebro:snap` and `/isitsafebro:isitsafe` appear in the slash command autocomplete with the namespace prefix.
+  - `/isitsafebro:isitsafe` walked the full runbook: clean-rollback snap, `create_scan_worktree` (branch `isitsafebro/scan-1778665303`), `install_and_start` (Next.js dev on port 33287, 21 endpoints discovered), `attacker` subagent (50 tool calls, 280k tokens, 5m 6s), then surfaced findings to the main session.
+  - **18 verified findings**: 8 critical (unauth admin, jwt alg:none, weak jwt secret, weak default creds, empty-password login, config leak, client-bundle key, IDOR), 9 high (unauth write, CORS, reflected XSS, excessive data exposure, 3 prompt injections, unauth list, PII in list), 1 medium (cookie missing HttpOnly).
+  - Mass-assignment payload correctly gated behind `--auto` (skipped).
+  - Total wall-clock: 5m 53s (cold turbopack compile + 50 probes through the rate limiter).
+- **LLM-driven attacker behavior vs deterministic demo:** the real `attacker` subagent is more selective than the demo's hardcoded loop. It found `unauthenticated-write-endpoint` on `/api/notes` (a route NOT in that payload's hint list — the LLM picked it up from `list_endpoints` output and probed it anyway, demonstrating real coverage value beyond static patterns). On the other hand, it ran fewer prompt-injection variations than the demo (3 of 7), reflecting the subagent's own tool-budget decisions. Both are correct behavior; calling it out so future attacker prompt tuning can target the gap.
+
 ### Post-Day-11 — demos + Next.js fixture
 
 - **Added:** `scripts/demo.mjs` — runnable end-to-end showcase. Drives the same MCP server `/isitsafe` uses, against the generic `vuln-app` fixture, all auto. ~45-second wall-clock. Exposed as `npm run demo`. Designed for asciinema / screen capture.
