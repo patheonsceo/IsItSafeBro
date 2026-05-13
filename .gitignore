@@ -17,3 +17,6 @@ yarn-error.log
 !.env.example
 
 .isitsafebro/
+
+# Claude Code drops this marker dir when the plugin is actively loaded
+.in_use/

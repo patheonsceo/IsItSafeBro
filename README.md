@@ -11,7 +11,7 @@ npm install -g isitsafebro
 isitsafebro register
 ```
 
-then in claude code, type `/isitsafe`.
+then in claude code, type `/isitsafebro:isitsafe`.
 
 ---
 
@@ -97,17 +97,21 @@ these are tracked in [CHANGELOG.md](./CHANGELOG.md) as Days 12-14 of the build s
 # 1. install the package globally
 npm install -g isitsafebro
 
-# 2. link the plugin into claude code's plugin directory
+# 2. register the plugin with claude code
 isitsafebro register
 ```
 
-`register` symlinks the plugin into `~/.claude/plugins/isitsafebro` (or `$CLAUDE_HOME/plugins/isitsafebro` if you've moved your claude home). after that, **restart claude code** (or open a new session) and the slash commands appear.
+`register` writes the six things claude code needs to discover and enable a plugin: a local marketplace dir, a marketplace.json manifest, a plugin symlink into it, a cache entry symlink, plus entries in `installed_plugins.json`, `known_marketplaces.json`, and `settings.json`. honors `$CLAUDE_HOME` if you've moved it; defaults to `~/.claude`.
+
+**after that, restart claude code (or open a new session)** — the slash commands appear under the plugin's namespace.
 
 verify it's registered:
 
 ```bash
 isitsafebro status
 ```
+
+prints a six-line check for every file and config entry it touched.
 
 ---
 
@@ -116,11 +120,13 @@ isitsafebro status
 inside claude code, in the working directory of your project:
 
 ```
-/snap                           # clean up uncommitted changes
-/isitsafe                       # run the full scan (coming soon)
-/isitsafe auth                  # scan just one category
-/isitsafe api                   # categories: auth, api, prompt, secrets, idor, all
+/isitsafebro:snap                   # clean up uncommitted changes
+/isitsafebro:isitsafe               # run the full scan
+/isitsafebro:isitsafe auth          # scan just one category
+/isitsafebro:isitsafe api           # categories: auth, api, prompt, secrets, idor, all
 ```
+
+claude code namespaces plugin commands as `<plugin>:<command>` so they don't collide with other plugins or built-ins. type `/i` and tab to autocomplete.
 
 the scan only attacks the version of your app running on localhost. it asks you to confirm you're not pointed at production before doing anything.
 
@@ -129,14 +135,14 @@ the scan only attacks the version of your app running on localhost. it asks you 
 ## uninstall
 
 ```bash
-# 1. unlink the plugin from claude code
+# 1. remove from claude code
 isitsafebro unregister
 
 # 2. uninstall the package
 npm uninstall -g isitsafebro
 ```
 
-`unregister` only removes the symlink it created; it won't delete anything else. if you ever installed manually (cp -r instead of symlink), unregister will refuse to touch it and tell you to remove it yourself.
+`unregister` removes everything `register` created: the marketplace dir, the cache entry, and the three config-file entries. it never touches anything outside its own keys, so other plugins / global settings are untouched.
 
 ---
 
