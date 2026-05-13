@@ -8,6 +8,23 @@ isitsafebro is pre-1.0. **Nothing has been published to npm yet.** Entries below
 
 ## Unreleased
 
+### 2026-05-13 — parallel attackers (fix for tool-budget coverage gaps)
+
+The first live run surfaced that a single attacker subagent stops short on coverage when the scope is `all` — observed as only 3 of 7 prompt-injection variants getting probed before the LLM decided to wrap up. The bottleneck is the subagent's own tool-budget heuristic, not the rate limiter or the payload library.
+
+**Change:** the `/isitsafebro:isitsafe` runbook now dispatches **one attacker subagent per category** (auth, api, secrets, idor, prompt) **in parallel** when scope is `all`. Five subagents instead of one. Each gets the full tool/context budget on a narrow scope. Findings get merged in the main session.
+
+The attacker system prompt also gained a "be exhaustive within your scope" rule so each focused subagent runs every payload + every reasonable variation in its category before returning, rather than stopping when "the user has the idea."
+
+**Expected behavior:**
+- Coverage goes up: every prompt-injection variant should fire (where applicable), every default-credential pair gets tried, every SQL injection probe in the api set runs.
+- Wall-clock goes down: the slowest subagent is now the gating factor, not the sum. LLM reasoning runs in 5 parallel contexts. Probes still serialize through the per-host rate limiter in `probe_endpoint` (50ms gap), but that's only ~50ms × ~250 probes = ~12s minimum even if you scan the whole library.
+- Tokens used per scan goes up (5× contexts), but coverage-per-token goes up faster.
+
+If `scope` is a single category (e.g. `/isitsafebro:isitsafe auth`), only that one attacker spawns — unchanged behavior for narrow scans.
+
+Partial-failure handling: if one subagent's output fails to parse, the orchestrator surfaces a partial-scan warning naming the failed category but proceeds with the parseable peers.
+
 ### 2026-05-13 — verified live in Claude Code
 
 - `isitsafebro register` rewritten to produce a working install: writes `~/.claude/plugins/marketplaces/local-isitsafebro/`, `cache/local-isitsafebro/isitsafebro/<ver>/`, and entries in `installed_plugins.json`, `known_marketplaces.json`, `settings.json`. The earlier "just symlink the package" approach didn't actually enable the plugin in current Claude Code (`v2.1.140`) because Claude Code looks for the plugin in the marketplace registry, not in the plugins dir directly.

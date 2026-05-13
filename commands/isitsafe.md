@@ -71,19 +71,26 @@ on success, remember the returned `url`. on failure, call `cleanup_worktree({ wo
 
 call `list_endpoints({ url, worktreePath })`. low-priority sanity check; if it returns zero endpoints, log a warning to the user but don't stop — the attacker can still probe via payload `endpoints_hint`.
 
-## step 6 — run the attack
+## step 6 — run the attack(s), in parallel
 
-spawn the `attacker` subagent (Task tool, `subagent_type: "attacker"`) with this prompt:
+determine the **dispatch plan** from `scope`:
+
+- if scope is `all`, dispatch **one attacker per category** (`auth`, `api`, `secrets`, `idor`, `prompt`) — five subagents total, in parallel.
+- if scope is a single category, dispatch one attacker for that category.
+
+**why parallel:** a single attacker subagent hits its tool-budget cliff and stops short — observed in real runs as e.g. only 3 of 7 prompt-injection variants getting probed. five focused attackers, each on a tight scope, each get the **full tool/context budget on a narrow problem**. coverage goes up, wall-clock goes down (LLM reasoning runs in parallel even though probes still serialize through the per-host rate limiter in `probe_endpoint`).
+
+**how:** in a single message, issue one Task tool call per subagent. Claude Code spawns them concurrently. Each subagent is `subagent_type: "attacker"` with this prompt (substituting the per-call scope):
 
 > Run a red-team scan with:
 >   target_url = <url>
 >   worktreePath = <worktreePath>
->   scope = <scope>
+>   scope = <category>
 >   allow_destructive = <auto>
 >
-> Follow the runbook in your system prompt. Return JSON only.
+> Follow the runbook in your system prompt. You are responsible only for the `<category>` payload set. Be exhaustive within that category — go through every payload and run every variation that's reasonable. Return JSON only.
 
-set a 5-minute hard timeout on the subagent task. parse the returned JSON. expected shape (per `agents/attacker.md`):
+set a **5-minute hard timeout per subagent**. each returns the canonical findings JSON:
 
 ```json
 {
@@ -96,9 +103,20 @@ set a 5-minute hard timeout on the subagent task. parse the returned JSON. expec
 }
 ```
 
-if parsing fails, surface to the user:
+**aggregate** the returned outputs:
 
-> the attacker came back with output i can't parse. tearing down the worktree. drop the output below into a github issue if you want me to look at it.
+- `findings` — concatenate every subagent's array
+- `skipped_destructive` — concatenate (each subagent reports its own destructive skips)
+- `errors` — concatenate
+- `scanned_payloads` — sum
+
+if **any one subagent's output fails to parse**, surface that single failure as a partial-scan warning but proceed with the parseable ones:
+
+> heads up: the <bad-category> attacker came back with output i couldn't parse. the other <N> categories ran fine; treating this scan as covering <every-other-category-name>. you can re-run with `/isitsafebro:isitsafe <bad-category>` later if you want full coverage.
+
+if **every** subagent failed, tell the user and stop:
+
+> the attackers all came back with output i can't parse. tearing down the worktree. drop one of the outputs below into a github issue if you want me to look at it.
 
 then call `cleanup_worktree` and stop.
 
